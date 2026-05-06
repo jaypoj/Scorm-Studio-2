@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Search, Image as ImageIcon, Youtube, X, LayoutTemplate, Loader2, Check, Clock } from 'lucide-react';
 import { AISettings } from '../types';
+import { appEnv } from '../services/env';
 
 interface MediaSearchModalProps {
   isOpen: boolean;
@@ -107,8 +108,8 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
             );
 
             // Google Custom Search
-            const apiKey = settings.googleSearchApiKey || process.env.CUSTOM_GEMINI_API_KEY; 
-            const engineId = settings.googleSearchEngineId || process.env.GOOGLE_SEARCH_ENGINE_ID;
+            const apiKey = settings.googleSearchApiKey || appEnv.googleSearchApiKey;
+            const engineId = settings.googleSearchEngineId || appEnv.googleSearchEngineId;
             if (apiKey && engineId && apiKey !== 'YOUR_API_KEY' && engineId !== 'YOUR_ENGINE_ID') {
                 promises.push(
                     fetchWithTimeout(`https://www.googleapis.com/customsearch/v1?cx=${engineId}&q=${encodeURIComponent(query)}&searchType=image&key=${apiKey}&imgSize=${imgSize}&num=10`)
@@ -156,9 +157,8 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
         } else {
             const keysToTry = [
                 settings.googleSearchApiKey,
-                process.env.API_KEY,
-                process.env.GEMINI_API_KEY,
-                process.env.CUSTOM_GEMINI_API_KEY
+                appEnv.googleSearchApiKey,
+                appEnv.geminiApiKey
             ].filter(Boolean) as string[];
 
             if (keysToTry.length === 0) {

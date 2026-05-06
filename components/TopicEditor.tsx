@@ -188,7 +188,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
           setPreviews(newPreviews);
           setDiagnosticLogs(logs);
       } else {
-           Object.values(newPreviews).forEach(url => {
+           Object.values(newPreviews).forEach((url: string) => {
               if (url.startsWith('blob:')) URL.revokeObjectURL(url);
            });
       }
@@ -197,7 +197,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     loadPreviewsAndDiscover();
     return () => {
       isMounted = false;
-      Object.values(previews).forEach(url => {
+      Object.values(previews as Record<string, string>).forEach((url: string) => {
           if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
       });
     };
