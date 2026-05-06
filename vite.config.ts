@@ -2,6 +2,12 @@ import path from 'path';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const normalizeBasePath = (basePath: string) => {
+  if (!basePath) return '/';
+  const withLeadingSlash = basePath.startsWith('/') ? basePath : `/${basePath}`;
+  return withLeadingSlash.endsWith('/') ? withLeadingSlash : `${withLeadingSlash}/`;
+};
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   const appEnv = {
@@ -13,6 +19,7 @@ export default defineConfig(({ mode }) => {
   };
 
   return {
+    base: normalizeBasePath(env.VITE_BASE_PATH || '/'),
     server: {
       port: 3000,
       host: '0.0.0.0',
