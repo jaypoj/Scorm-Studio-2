@@ -54,8 +54,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                  <ol className="list-decimal pl-4 space-y-1">
                      <li><strong>Do NOT use the default `gen-lang-client` project.</strong> Google blocks Custom Search on this auto-generated project. You must create a <a href="https://console.cloud.google.com/projectcreate" target="_blank" className="underline font-semibold">new project in Google Cloud Console</a>.</li>
                      <li>In your new project, search for and enable <strong>Custom Search API</strong> and <strong>YouTube Data API v3</strong>.</li>
-                     <li>Create an API Key and add it to AI Studio Secrets as `CUSTOM_GEMINI_API_KEY`.</li>
-                     <li>Create a Search Engine at <a href="https://programmablesearchengine.google.com" target="_blank" className="underline font-semibold">programmablesearchengine.google.com</a>, enable Image Search, and add the ID as `GOOGLE_SEARCH_ENGINE_ID` to AI Studio Secrets.</li>
+                     <li>Create a restricted API key and add it to `.env.local` as `VITE_GOOGLE_SEARCH_API_KEY`.</li>
+                     <li>Create a Search Engine at <a href="https://programmablesearchengine.google.com" target="_blank" className="underline font-semibold">programmablesearchengine.google.com</a>, enable Image Search, and add the ID to `.env.local` as `VITE_GOOGLE_SEARCH_ENGINE_ID`.</li>
                  </ol>
              </div>
              <div className="space-y-3">
