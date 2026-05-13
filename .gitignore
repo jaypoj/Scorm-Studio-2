@@ -4,3 +4,7 @@ dist/
 .env.*
 !.env.example
 .DS_Store
+SCORM-example/
+SCORM-example.zip
+vite.*.log
+*.log

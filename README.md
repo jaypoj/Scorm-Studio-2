@@ -2,7 +2,7 @@
 
 A Vite + React editor for SCORM course projects exported from Google AI Studio. It supports project loading, sandboxed browser testing in Codex Cloud, Gemini-assisted content utilities, media search, and SCORM 1.2 package export.
 
-## Where to put Google keys and secrets
+## Where to put API keys and secrets
 
 1. Copy the example environment file:
 
@@ -14,8 +14,8 @@ A Vite + React editor for SCORM course projects exported from Google AI Studio. 
 
    ```bash
    VITE_GEMINI_API_KEY=your_google_ai_studio_gemini_key
-   VITE_GOOGLE_SEARCH_API_KEY=your_google_cloud_search_youtube_key
-   VITE_GOOGLE_SEARCH_ENGINE_ID=your_programmable_search_engine_cx
+   VITE_GOOGLE_SEARCH_API_KEY=your_google_cloud_youtube_key
+   VITE_PIXABAY_API_KEY=your_pixabay_key
    ```
 
 3. Restart `npm run dev` after changing `.env.local`.
@@ -27,10 +27,10 @@ A Vite + React editor for SCORM course projects exported from Google AI Studio. 
 | Variable | Required | Used for |
 | --- | --- | --- |
 | `VITE_GEMINI_API_KEY` | Yes for AI features | Gemini topic generation, distractors, research, image generation, audio captions |
-| `VITE_GOOGLE_SEARCH_API_KEY` | Optional | Google Custom Search image results and YouTube Data API video search |
-| `VITE_GOOGLE_SEARCH_ENGINE_ID` | Optional | Programmable Search Engine `cx` for Google image search |
+| `VITE_GOOGLE_SEARCH_API_KEY` | Optional | YouTube Data API video search |
+| `VITE_PIXABAY_API_KEY` | Optional | Pixabay image search |
 
-Legacy AI Studio names (`GEMINI_API_KEY`, `GOOGLE_API_KEY`, `CUSTOM_GEMINI_API_KEY`, `GOOGLE_SEARCH_ENGINE_ID`) are also read by `vite.config.ts`, but new local work should use the `VITE_*` names above.
+Legacy AI Studio names (`GEMINI_API_KEY`, `GOOGLE_API_KEY`, `CUSTOM_GEMINI_API_KEY`) are also read by `vite.config.ts`, but new local work should use the `VITE_*` names above.
 
 ## Public browser preview with GitHub Pages
 
@@ -85,8 +85,8 @@ For UI testing, deploy without keys first. If you want AI features on the public
 | Secret name | Used for |
 | --- | --- |
 | `VITE_GEMINI_API_KEY` | Gemini content generation, image generation, captions |
-| `VITE_GOOGLE_SEARCH_API_KEY` | Google Custom Search and YouTube search |
-| `VITE_GOOGLE_SEARCH_ENGINE_ID` | Programmable Search Engine image-search `cx` |
+| `VITE_GOOGLE_SEARCH_API_KEY` | YouTube search |
+| `VITE_PIXABAY_API_KEY` | Pixabay image search |
 
 > Warning: because GitHub Pages is static, these values are baked into browser JavaScript. Only use restricted, disposable test keys. Do not put production secrets in a static Pages build.
 

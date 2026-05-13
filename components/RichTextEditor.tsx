@@ -1,18 +1,20 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { Code, Eye, Bold, Italic, List, Type, AlignLeft, ImagePlus, Youtube } from 'lucide-react';
+import { Code, Eye, Bold, Italic, List, ListOrdered, Type, ImagePlus, Indent, Outdent, Table2 } from 'lucide-react';
 import { MediaSearchModal } from './MediaSearchModal';
 import { AISettings } from '../types';
 
 interface RichTextEditorProps {
   value: string;
   onChange: (value: string) => void;
+  onPasteImage?: (file: File) => Promise<void> | void;
+  onPasteImageUrl?: (url: string) => Promise<void> | void;
   label?: string;
   placeholder?: string;
   className?: string;
   aiSettings?: AISettings;
 }
 
-export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange, label, placeholder, className, aiSettings }) => {
+export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange, onPasteImage, onPasteImageUrl, label, placeholder, className, aiSettings }) => {
   const [isSourceMode, setIsSourceMode] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const [localValue, setLocalValue] = useState(value);
@@ -50,6 +52,24 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
     document.execCommand(command, false, cmdValue);
     if(contentRef.current) contentRef.current.focus();
     handleInput();
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const pastedImage = Array.from(e.clipboardData.files as FileList).find((file: File) => file.type.startsWith('image/'));
+    if (pastedImage && onPasteImage) {
+      e.preventDefault();
+      await onPasteImage(pastedImage);
+      return;
+    }
+
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    const htmlImageUrl = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('img')?.getAttribute('src') : '';
+    const imageUrl = htmlImageUrl || (/^(https?:|data:image\/)/i.test(text.trim()) ? text.trim() : '');
+    if (imageUrl && onPasteImageUrl) {
+      e.preventDefault();
+      await onPasteImageUrl(imageUrl);
+    }
   };
 
   const insertAtCursor = (html: string) => {
@@ -93,6 +113,40 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
     setSavedRange(null);
   };
 
+  const insertAtTop = (html: string) => {
+    if (!contentRef.current) return;
+    contentRef.current.innerHTML = `${html}${contentRef.current.innerHTML}`;
+    handleInput();
+    setSavedRange(null);
+  };
+
+  const insertTable = () => {
+    insertAtCursor(`
+      <table>
+        <thead>
+          <tr>
+            <th>Column 1</th>
+            <th>Column 2</th>
+            <th>Column 3</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Detail</td>
+            <td>Detail</td>
+            <td>Detail</td>
+          </tr>
+          <tr>
+            <td>Detail</td>
+            <td>Detail</td>
+            <td>Detail</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><br></p>
+    `);
+  };
+
   return (
     <div className={`border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm flex flex-col ${className || 'min-h-[400px]'}`}>
       {/* Toolbar */}
@@ -113,6 +167,18 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
                     <div className="w-px h-4 bg-slate-300 mx-1"></div>
                     <button onClick={() => execCmd('insertUnorderedList')} className="p-1.5 hover:bg-slate-200 rounded text-slate-600" title="Bullet List">
                         <List className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => execCmd('insertOrderedList')} className="p-1.5 hover:bg-slate-200 rounded text-slate-600" title="Numbered List">
+                        <ListOrdered className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => execCmd('outdent')} className="p-1.5 hover:bg-slate-200 rounded text-slate-600" title="Decrease Indent">
+                        <Outdent className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => execCmd('indent')} className="p-1.5 hover:bg-slate-200 rounded text-slate-600" title="Increase Indent">
+                        <Indent className="w-4 h-4" />
+                    </button>
+                    <button onClick={insertTable} className="p-1.5 hover:bg-slate-200 rounded text-slate-600" title="Insert Table">
+                        <Table2 className="w-4 h-4" />
                     </button>
                     <div className="w-px h-4 bg-slate-300 mx-1"></div>
                     <button 
@@ -160,7 +226,8 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
                 ref={contentRef}
                 contentEditable
                 onInput={handleInput}
-                className="flex-1 w-full p-6 focus:outline-none overflow-y-auto [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-4 [&>h2]:text-2xl [&>h2]:font-bold [&>h2]:mb-3 [&>h3]:text-xl [&>h3]:font-bold [&>h3]:mb-2 [&>p]:mb-3 [&>ul]:list-disc [&>ul]:pl-5 [&>ol]:list-decimal [&>ol]:pl-5 text-slate-800"
+                onPaste={handlePaste}
+                className="course-content-editor flex-1 w-full p-6 focus:outline-none overflow-y-auto [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-4 [&>h2]:text-2xl [&>h2]:font-bold [&>h2]:mb-3 [&>h3]:text-xl [&>h3]:font-bold [&>h3]:mb-2 [&>p]:mb-3 [&>ul]:list-disc [&>ul]:pl-5 [&>ol]:list-decimal [&>ol]:pl-5 text-slate-800"
                 dangerouslySetInnerHTML={{ __html: value }}
              />
          )}
@@ -207,7 +274,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
                     <p><br></p>
                   `;
                   
-                  insertAtCursor(iframeHtml);
+                  insertAtTop(iframeHtml);
               }}
           />
       )}

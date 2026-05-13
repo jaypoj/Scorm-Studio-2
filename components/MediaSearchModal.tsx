@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Image as ImageIcon, Youtube, X, LayoutTemplate, Loader2, Check, Clock } from 'lucide-react';
+import { Search, Image as ImageIcon, Youtube, X, Loader2, Check, Clock } from 'lucide-react';
 import { AISettings } from '../types';
 import { appEnv } from '../services/env';
 
@@ -7,16 +7,15 @@ interface MediaSearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: AISettings;
-  onInsertImage: (url: string, alt: string) => void;
+  onInsertImage: (url: string, alt: string, previewUrl?: string) => void;
   onInsertVideo: (video: any, startTime: number, endTime: number) => void;
 }
 
 export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onClose, settings, onInsertImage, onInsertVideo }) => {
   const [activeTab, setActiveTab] = useState<'image' | 'video'>('image');
-  const [imageProvider, setImageProvider] = useState<'openverse' | 'google' | 'wikimedia'>('openverse');
   const [query, setQuery] = useState('');
-  const [imgSize, setImgSize] = useState('large'); // icon, small, medium, large, xlarge, xxlarge, huge
   const [isSearching, setIsSearching] = useState(false);
+  const [failedImageUrls, setFailedImageUrls] = useState<string[]>([]);
   
   // Results
   const [imageResults, setImageResults] = useState<any[]>([]);
@@ -61,6 +60,7 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
   const handleSearch = async () => {
     setError(null);
     setIsSearching(true);
+    setFailedImageUrls([]);
     
     try {
         if (activeTab === 'image') {
@@ -73,6 +73,50 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                 ]);
             };
 
+            // User-approved providers: keep Pixabay and Wikimedia in this search mix unless explicitly changed.
+            const pixabayApiKey = settings.pixabayApiKey || appEnv.pixabayApiKey;
+            if (pixabayApiKey) {
+                promises.push(
+                    fetchWithTimeout(`https://pixabay.com/api/?key=${encodeURIComponent(pixabayApiKey)}&q=${encodeURIComponent(query)}&image_type=photo&safesearch=true&per_page=20`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (!data?.hits) return [];
+                        return data.hits.map((item: any) => ({
+                            link: item.largeImageURL || item.webformatURL || item.previewURL,
+                            previewLink: item.previewURL || item.webformatURL,
+                            title: item.tags || `Photo by ${item.user || 'Pixabay contributor'}`,
+                            displayLink: 'pixabay.com',
+                            image: { width: item.imageWidth || item.webformatWidth, height: item.imageHeight || item.webformatHeight }
+                        }));
+                    }).catch(e => { console.error("Pixabay error:", e); return []; })
+                );
+            }
+
+            const googleApiKey = settings.googleSearchApiKey || appEnv.googleSearchApiKey;
+            const googleEngineId = settings.googleSearchEngineId || appEnv.googleSearchEngineId;
+            if (googleApiKey && googleEngineId) {
+                promises.push(
+                    fetchWithTimeout(`https://www.googleapis.com/customsearch/v1?cx=${encodeURIComponent(googleEngineId)}&q=${encodeURIComponent(query)}&searchType=image&key=${encodeURIComponent(googleApiKey)}&num=10&safe=active&imgType=photo`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.error) {
+                            console.error("Google image search error:", data.error);
+                            return [];
+                        }
+                        return (data.items || []).map((item: any) => ({
+                            link: item.link,
+                            previewLink: item.image?.thumbnailLink || item.link,
+                            title: item.title,
+                            displayLink: item.displayLink || 'googleapis.com',
+                            image: {
+                                width: item.image?.contextWidth || item.image?.width,
+                                height: item.image?.contextHeight || item.image?.height
+                            }
+                        }));
+                    }).catch(e => { console.error("Google image search error:", e); return []; })
+                );
+            }
+
             // Openverse
             promises.push(
                 fetchWithTimeout(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}`)
@@ -81,6 +125,7 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                     if (data.error) return [];
                     return (data.results || []).map((item: any) => ({
                         link: item.url,
+                        previewLink: item.thumbnail || item.url,
                         title: item.title,
                         displayLink: item.source || 'openverse.org',
                         image: { width: item.width, height: item.height }
@@ -88,9 +133,9 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                 }).catch(e => { console.error("Openverse error:", e); return []; })
             );
 
-            // Wikimedia
+            // User-approved provider: do not remove Wikimedia without explicit approval.
             promises.push(
-                fetchWithTimeout(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrnamespace=6&gsrlimit=24&prop=imageinfo&iiprop=url|size&format=json&origin=*`)
+                fetchWithTimeout(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrnamespace=6&gsrlimit=24&prop=imageinfo&iiprop=url|size&iiurlwidth=800&iiurlheight=600&format=json&origin=*`)
                 .then(res => res.json())
                 .then(data => {
                     if (data.error) return [];
@@ -99,30 +144,14 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                         const info = p.imageinfo?.[0] || {};
                         return {
                             link: info.url,
-                            title: p.title.replace('File:', '').replace(/\.[^/.]+$/, ""),
+                            previewLink: info.thumburl || info.url,
+                            title: p.title?.replace('File:', '').replace(/\.[^/.]+$/, "") || 'Wikimedia image',
                             displayLink: 'commons.wikimedia.org',
                             image: { width: info.width, height: info.height }
                         };
                     });
                 }).catch(e => { console.error("Wikimedia error:", e); return []; })
             );
-
-            // Google Custom Search
-            const apiKey = settings.googleSearchApiKey || appEnv.googleSearchApiKey;
-            const engineId = settings.googleSearchEngineId || appEnv.googleSearchEngineId;
-            if (apiKey && engineId && apiKey !== 'YOUR_API_KEY' && engineId !== 'YOUR_ENGINE_ID') {
-                promises.push(
-                    fetchWithTimeout(`https://www.googleapis.com/customsearch/v1?cx=${engineId}&q=${encodeURIComponent(query)}&searchType=image&key=${apiKey}&imgSize=${imgSize}&num=10`)
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.error) {
-                            console.error("Google API error:", data.error);
-                            return [];
-                        }
-                        return data.items || [];
-                    }).catch(e => { console.error("Google error:", e); return []; })
-                );
-            }
 
             const resultsArrays = await Promise.all(promises);
             
@@ -139,14 +168,11 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
 
             // Filter valid extensions
             const filteredResults = mixedResults.filter((item: any) => {
-                if (!item.link) return false;
-                const urlWithoutParams = item.link.split('?')[0].toLowerCase();
-                return urlWithoutParams.endsWith('.jpg') || 
-                       urlWithoutParams.endsWith('.jpeg') || 
-                       urlWithoutParams.endsWith('.png') || 
-                       urlWithoutParams.endsWith('.gif') || 
-                       urlWithoutParams.endsWith('.svg') || 
-                       urlWithoutParams.endsWith('.webp');
+                if (!item?.link || !item?.previewLink) return false;
+                if (!item.title || !String(item.title).trim()) return false;
+                const previewUrl = String(item.previewLink).trim();
+                const fullUrl = String(item.link).trim();
+                return /^https?:\/\//i.test(previewUrl) && /^https?:\/\//i.test(fullUrl);
             });
             
             if (filteredResults.length === 0) {
@@ -170,7 +196,7 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
 
             for (const key of keysToTry) {
                 try {
-                    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=10&q=${encodeURIComponent(query)}&type=video&key=${key}`;
+                    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=18&q=${encodeURIComponent(query)}&type=video&key=${key}`;
                     const res = await fetch(url);
                     const data = await res.json();
                     
@@ -228,13 +254,13 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                onClick={() => { setActiveTab('image'); setError(null); }}
                className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 ${activeTab === 'image' ? 'text-blue-600 border-b-2 border-blue-600 bg-white' : 'text-slate-500 hover:text-slate-700'}`}
            >
-               <ImageIcon className="w-4 h-4" /> Google Images
+               <ImageIcon className="w-4 h-4" /> Image
            </button>
            <button 
                onClick={() => { setActiveTab('video'); setError(null); }}
                className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 ${activeTab === 'video' ? 'text-red-600 border-b-2 border-red-600 bg-white' : 'text-slate-500 hover:text-slate-700'}`}
            >
-               <Youtube className="w-4 h-4" /> YouTube Videos
+               <Youtube className="w-4 h-4" /> YouTube
            </button>
         </div>
 
@@ -252,11 +278,6 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                     autoFocus
                 />
             </div>
-            {activeTab === 'image' && (
-                <div className="flex items-center text-xs text-slate-500 max-w-[200px]">
-                    Mixed results from Openverse & Wikimedia
-                </div>
-            )}
             <button 
                 onClick={handleSearch}
                 disabled={isSearching || !query}
@@ -278,14 +299,17 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
             {activeTab === 'image' ? (
                 <div className="flex-1 overflow-y-auto p-4">
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {!isSearching && imageResults.map((item, index) => (
+                        {!isSearching && imageResults.map((item, index) => {
+                            const imageUrl = item.previewLink || item.link;
+                            if (failedImageUrls.includes(imageUrl)) return null;
+                            return (
                             <div key={index} className="bg-white rounded overflow-hidden shadow border border-slate-200 group cursor-pointer hover:shadow-md hover:border-blue-300 transition-all flex flex-col">
                                 <div className="aspect-video bg-slate-100 relative shrink-0">
-                                    <img src={item.link} alt={item.title} className="w-full h-full object-contain" />
+                                    <img src={imageUrl} alt={item.title} className="w-full h-full object-contain" referrerPolicy="no-referrer" onError={() => setFailedImageUrls(prev => prev.includes(imageUrl) ? prev : [...prev, imageUrl])} />
                                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                                         <button 
                                             onClick={() => {
-                                                onInsertImage(item.link, item.title || '');
+                                                onInsertImage(item.link, item.title || '', item.previewLink);
                                                 onClose();
                                             }}
                                             className="bg-white text-blue-600 px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-1 shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-transform"
@@ -299,17 +323,33 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                                     <p className="text-[10px] text-slate-400 mt-0.5">{item.image?.width}x{item.image?.height} • {item.displayLink}</p>
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                         {!isSearching && imageResults.length === 0 && query && !error && (
                              <div className="col-span-full py-12 text-center text-slate-500">No images found for this query.</div>
                         )}
                     </div>
                 </div>
             ) : (
-                <div className="flex-1 flex overflow-hidden">
-                    {/* Column 1: Narrow Results List */}
-                    <div className={`${selectedVideo ? 'w-1/4' : 'w-full'} border-r border-slate-200 overflow-y-auto h-full p-4 transition-all duration-300 bg-white`}>
-                        <div className="space-y-3">
+                <div className={`flex-1 overflow-y-auto p-4 ${selectedVideo ? 'grid lg:grid-cols-[minmax(0,2fr)_320px] gap-4' : ''}`}>
+                    <div className="min-w-0 space-y-4">
+                        {selectedVideo && (
+                            <div className="bg-slate-900 rounded-xl overflow-hidden shadow-lg">
+                                <div className="aspect-video relative group">
+                                    <iframe 
+                                        src={`https://www.youtube.com/embed/${selectedVideo.id?.videoId}?autoplay=1&start=${startTime}${endTime > 0 ? `&end=${endTime}` : ''}`} 
+                                        className="absolute inset-0 w-full h-full border-0"
+                                        allowFullScreen 
+                                        title="Video Snippet Preview"
+                                    />
+                                    <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-2 rounded text-white text-[10px] font-medium opacity-0 group-hover:opacity-100 transition-opacity max-w-[240px] truncate">
+                                        {selectedVideo.snippet?.title}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {!isSearching && videoResults.map((item, index) => (
                                 <div 
                                     key={index} 
@@ -320,37 +360,23 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                                     }}
                                     className={`flex flex-col gap-2 p-3 rounded-lg border cursor-pointer transition-all ${selectedVideo?.id?.videoId && selectedVideo?.id?.videoId === item.id?.videoId ? 'border-red-500 bg-red-50 shadow-sm' : 'bg-white border-slate-200 hover:border-red-300 hover:shadow-sm'}`}
                                 >
-                                    <img src={item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url} alt={item.snippet?.title} className="w-full aspect-video object-cover rounded shrink-0" />
+                                    <div className="aspect-video overflow-hidden rounded bg-slate-100">
+                                        <img src={item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.default?.url} alt={item.snippet?.title} className="w-full h-full object-cover" />
+                                    </div>
                                     <div className="flex-1 min-w-0">
-                                        <div className={`font-medium text-slate-800 line-clamp-2 ${selectedVideo ? 'text-[11px]' : 'text-sm'}`}>{item.snippet?.title}</div>
+                                        <div className="font-medium text-slate-800 line-clamp-2 text-sm">{item.snippet?.title}</div>
                                         <div className="text-[10px] text-slate-500 mt-1">{item.snippet?.channelTitle}</div>
                                     </div>
                                 </div>
                             ))}
                             {!isSearching && videoResults.length === 0 && query && !error && (
-                                 <div className="py-12 text-center text-slate-500">No videos found.</div>
+                                 <div className="col-span-full py-12 text-center text-slate-500">No videos found.</div>
                             )}
                         </div>
                     </div>
 
-                    {/* Column 2: Selected Video Preview */}
                     {selectedVideo && (
-                        <div className="flex-1 flex flex-col bg-slate-900 overflow-hidden relative group">
-                            <iframe 
-                                src={`https://www.youtube.com/embed/${selectedVideo.id?.videoId}?autoplay=1&start=${startTime}${endTime > 0 ? `&end=${endTime}` : ''}`} 
-                                className="w-full h-full border-0" 
-                                allowFullScreen 
-                                title="Video Snippet Preview"
-                            />
-                            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md p-2 rounded text-white text-[10px] font-medium opacity-0 group-hover:opacity-100 transition-opacity max-w-[200px] truncate">
-                                {selectedVideo.snippet?.title}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Column 3: Timing Controls */}
-                    {selectedVideo && (
-                        <div className="w-[280px] bg-white border-l border-slate-200 flex flex-col h-full shadow-lg z-10 shrink-0">
+                        <div className="bg-white border border-slate-200 rounded-xl flex flex-col h-fit shadow-lg z-10 shrink-0">
                             <div className="p-4 flex-1 overflow-y-auto">
                                 <h3 className="font-bold text-slate-800 text-sm mb-6 pb-2 border-b border-slate-100 flex items-center gap-2">
                                     <Clock className="w-4 h-4 text-red-600" />
@@ -371,7 +397,6 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                                                     setStartTime(parseTime(e.target.value));
                                                 }}
                                                 onBlur={() => {
-                                                    // Auto-format on blur
                                                     setStartInput(formatTime(startTime));
                                                 }}
                                                 className="w-full p-2 bg-white border border-slate-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-mono text-center"
@@ -396,7 +421,6 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                                                     setEndTime(parseTime(e.target.value));
                                                 }}
                                                 onBlur={() => {
-                                                    // Auto-format on blur if not empty
                                                     if (endTime > 0) {
                                                         setEndInput(formatTime(endTime));
                                                     } else {
@@ -420,7 +444,7 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
                                 </div>
                             </div>
 
-                            <div className="p-4 bg-slate-50 border-t border-slate-200">
+                            <div className="p-4 bg-slate-50 border-t border-slate-200 rounded-b-xl">
                                 <button 
                                     onClick={handleInsertVideo}
                                     className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95 shadow-red-100"

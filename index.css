@@ -22,3 +22,229 @@ iframe {
 .markdown-body iframe {
     margin: 1rem 0;
 }
+
+.course-content-editor {
+    line-height: 1.65;
+}
+
+.course-content-editor ul,
+.course-content-editor ol {
+    margin: 0.75rem 0 1rem;
+    padding-left: 1.75rem;
+}
+
+.course-content-editor ul {
+    list-style: disc;
+}
+
+.course-content-editor ol {
+    list-style: decimal;
+}
+
+.course-content-editor li {
+    margin: 0.35rem 0;
+    padding-left: 0.15rem;
+}
+
+.course-content-editor li > ul,
+.course-content-editor li > ol {
+    margin: 0.35rem 0 0.35rem 0.5rem;
+}
+
+.course-content-editor table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.25rem;
+    table-layout: auto;
+}
+
+.course-content-editor th,
+.course-content-editor td {
+    border: 1px solid #cbd5e1;
+    padding: 0.65rem 0.8rem;
+    text-align: left;
+    vertical-align: top;
+    min-width: 7rem;
+}
+
+.course-content-editor th {
+    background: #f1f5f9;
+    color: #0f172a;
+    font-weight: 700;
+}
+
+.course-content-editor tr:nth-child(even) td {
+    background: #f8fafc;
+}
+
+.theme-dark {
+    --app-bg: #111014;
+    --app-panel: #1b1821;
+    --app-panel-2: #24202c;
+    --app-border: #40364f;
+    --app-text: #f8f5ff;
+    --app-muted: #c5bbd6;
+    --app-dim: #9488aa;
+    --app-violet: #7c3aed;
+    --app-violet-dark: #4c1d95;
+    --app-violet-mid: #6d28d9;
+    --app-bloom: rgb(124 58 237 / 0.38);
+    background:
+        radial-gradient(circle at 78% 8%, rgb(124 58 237 / 0.18), transparent 32rem),
+        linear-gradient(135deg, #121116 0%, #18151f 52%, #0b0a0d 100%) !important;
+    color: var(--app-text);
+}
+
+.theme-dark .bg-white,
+.theme-dark .bg-slate-50,
+.theme-dark .bg-slate-100,
+.theme-dark .bg-blue-50,
+.theme-dark .bg-purple-50,
+.theme-dark .bg-emerald-50,
+.theme-dark .bg-amber-50 {
+    background-color: var(--app-panel) !important;
+    color: var(--app-text) !important;
+}
+
+.theme-dark .bg-blue-50\/60,
+.theme-dark .bg-blue-50\/70,
+.theme-dark .bg-slate-50\/60,
+.theme-dark .bg-slate-50\/70 {
+    background-color: #211b2b !important;
+    color: var(--app-text) !important;
+}
+
+.theme-dark .bg-blue-100,
+.theme-dark .bg-slate-200,
+.theme-dark .bg-slate-300 {
+    background-color: #272231 !important;
+    color: var(--app-text) !important;
+}
+
+.theme-dark .bg-slate-900,
+.theme-dark .bg-slate-800 {
+    background-color: #0f0e13 !important;
+}
+
+.theme-dark .text-slate-900,
+.theme-dark .text-slate-800,
+.theme-dark .text-slate-700,
+.theme-dark .text-blue-900,
+.theme-dark .text-blue-700,
+.theme-dark .text-purple-700,
+.theme-dark .text-emerald-700,
+.theme-dark .text-amber-800 {
+    color: var(--app-text) !important;
+}
+
+.theme-dark .text-slate-600,
+.theme-dark .text-slate-500,
+.theme-dark .text-slate-400,
+.theme-dark .text-blue-600,
+.theme-dark .text-purple-600 {
+    color: #d6cdeb !important;
+}
+
+.theme-dark .text-xs,
+.theme-dark .text-sm,
+.theme-dark label,
+.theme-dark p,
+.theme-dark span {
+    color: inherit;
+}
+
+.theme-dark .border,
+.theme-dark [class*="border-slate"],
+.theme-dark [class*="border-blue"],
+.theme-dark [class*="border-purple"],
+.theme-dark [class*="border-emerald"],
+.theme-dark [class*="border-amber"] {
+    border-color: var(--app-border) !important;
+}
+
+.theme-dark input,
+.theme-dark textarea,
+.theme-dark select,
+.theme-dark [contenteditable] {
+    background-color: #121016 !important;
+    color: var(--app-text) !important;
+    border-color: var(--app-border) !important;
+}
+
+.theme-dark input::placeholder,
+.theme-dark textarea::placeholder {
+    color: #b9adc9 !important;
+}
+
+.theme-dark button,
+.theme-dark .cursor-pointer {
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.theme-dark button:hover,
+.theme-dark .cursor-pointer:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 1px rgb(167 139 250 / 0.28), 0 14px 38px -22px var(--app-bloom);
+}
+
+.theme-dark button:disabled {
+    opacity: 0.72 !important;
+    color: #d9d0e8 !important;
+    cursor: not-allowed;
+}
+
+.theme-dark button:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.theme-dark .bg-blue-600,
+.theme-dark .bg-green-600,
+.theme-dark .bg-purple-600,
+.theme-dark .bg-slate-800:hover,
+.theme-dark .hover\:bg-blue-700:hover,
+.theme-dark .hover\:bg-green-700:hover,
+.theme-dark .hover\:bg-purple-700:hover {
+    background: linear-gradient(135deg, var(--app-violet) 0%, var(--app-violet-mid) 48%, var(--app-violet-dark) 100%) !important;
+    color: white !important;
+}
+
+.theme-dark .border-2.border-dashed {
+    background-color: #191620 !important;
+    border-color: #6d5a83 !important;
+}
+
+.theme-dark .border-2.border-dashed .bg-white,
+.theme-dark .border-2.border-dashed button,
+.theme-dark .border-2.border-dashed input {
+    background-color: #111016 !important;
+    color: var(--app-text) !important;
+}
+
+.theme-dark [class*="bg-blue-50"] button:not(:disabled),
+.theme-dark [class*="bg-slate-50"] button:not(:disabled) {
+    color: var(--app-text) !important;
+}
+
+.theme-dark .shadow-sm,
+.theme-dark .shadow-md,
+.theme-dark .shadow-lg,
+.theme-dark .shadow-xl,
+.theme-dark .shadow-2xl {
+    box-shadow: 0 20px 60px -42px rgb(0 0 0 / 0.95), 0 0 0 1px rgb(255 255 255 / 0.035) !important;
+}
+
+.theme-dark .course-content-editor table,
+.theme-dark .course-content-editor th,
+.theme-dark .course-content-editor td {
+    border-color: var(--app-border);
+}
+
+.theme-dark .course-content-editor th {
+    background: #272031;
+    color: var(--app-text);
+}
+
+.theme-dark .course-content-editor tr:nth-child(even) td {
+    background: #211c29;
+}

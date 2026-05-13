@@ -115,6 +115,8 @@ export interface ScormProject {
     version: string;
     passingScore: number;
     completionCriteria: string;
+    requireKnowledgeCheckBeforeContinue: boolean;
+    requireAudioCompletionBeforeContinue: boolean;
   };
 }
 
@@ -174,4 +176,34 @@ export interface AISettings {
   model: string;
   googleSearchApiKey?: string;
   googleSearchEngineId?: string;
+  pixabayApiKey?: string;
+}
+
+export type AiRateLimitLevel = '0' | 'some' | 'medium' | 'most' | 'full';
+
+export interface PronunciationEntry {
+  id: string;
+  term: string;
+  replacement: string;
+}
+
+export interface TtsSettings {
+  voiceName: string;
+  pace: 'very-slow' | 'slow' | 'normal' | 'fast' | 'very-fast';
+}
+
+export interface PronunciationConfig {
+  tts: TtsSettings;
+  pronunciations: PronunciationEntry[];
+}
+
+export type BatchJobType = 'tts' | 'captions' | null;
+export type BatchPageStatus = 'pending' | 'running' | 'done' | 'skipped' | 'error';
+
+export interface BatchProgressItem {
+  pageId: string;
+  title: string;
+  audioStatus: BatchPageStatus;
+  captionStatus: BatchPageStatus;
+  message?: string;
 }

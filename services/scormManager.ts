@@ -12,6 +12,95 @@ const emptyPage = (id: string, title: string) => ({
 });
 
 export class ScormManager {
+  static createBlankTopic(id: string, title: string) {
+    return {
+      id,
+      title,
+      content: `<h2>${title}</h2><p>Add lesson content here.</p>`,
+      narration: '',
+      duration: 5,
+      imageKeywords: [title],
+      imagePrompts: [`Professional training image representing ${title}`],
+      videoSearchTerms: [`${title} training`],
+      media: [],
+      knowledgeCheck: {
+        questions: [
+          {
+            id: `kc-${id}`,
+            type: 'multiple-choice' as const,
+            question: `Which statement best supports ${title}?`,
+            options: ['Add correct option', 'Add distractor option', 'Add distractor option', 'Add distractor option'],
+            correctAnswer: 'Add correct option',
+            feedback: {
+              correct: 'Correct. This concept supports the lesson objective.',
+              incorrect: 'Review the page content and try again.'
+            }
+          }
+        ]
+      }
+    };
+  }
+
+  static createProject(courseName: string, topics: string[] = [], difficulty = 3, generatedContent?: CourseContent): ScormProject {
+    const now = new Date().toISOString();
+    const courseContent: CourseContent = generatedContent || {
+      welcomePage: {
+        ...emptyPage('welcome', `Welcome to ${courseName}`),
+        content: `<h2>Course Introduction</h2><p>Welcome to ${courseName}. Use this page to introduce the course purpose, audience, and expected outcomes.</p>`,
+        narration: `Welcome to ${courseName}. This course introduces the key concepts, skills, and decisions learners will practice throughout the lessons.`,
+        imageKeywords: [courseName],
+        imagePrompts: [`Professional training image for ${courseName}`],
+      },
+      learningObjectivesPage: {
+        ...emptyPage('learning-objectives', 'Learning Objectives'),
+        content: `<h2>Learning Objectives</h2><ul>${(topics.length ? topics : ['Describe the core concepts', 'Apply the workflow', 'Check understanding']).map(topic => `<li>${topic}</li>`).join('')}</ul>`,
+        narration: `By the end of this course, learners will be able to describe the major concepts, apply the recommended workflow, and confirm understanding through practice and assessment.`,
+        imageKeywords: ['learning objectives', courseName],
+        imagePrompts: [`Professional training image showing learning objectives for ${courseName}`],
+      },
+      topics: topics.map((topic, index) => ScormManager.createBlankTopic(`topic-${index}`, topic)),
+      assessment: {
+        narration: null,
+        passMark: 80,
+        questions: []
+      },
+      lastModified: now,
+    };
+
+    return ScormManager.prepareForSave({
+      project: {
+        id: `project-${Date.now()}`,
+        name: courseName,
+        created: now,
+        lastModified: now,
+        path: '',
+      },
+      courseData: {
+        title: courseName,
+        difficulty,
+        template: 'default',
+        topics,
+        customTopics: topics,
+      },
+      courseContent,
+      jsonImportData: {
+        isLocked: false,
+        isTreeVisible: true,
+        rawJson: JSON.stringify(courseContent),
+        validationResult: { data: courseContent, isValid: true, summary: 'Created by SCORM Architect.' },
+      },
+      aiPrompt: null,
+      media: { images: [], videos: [], audio: [] },
+      scormConfig: {
+        version: '1.2',
+        passingScore: 80,
+        completionCriteria: 'passed',
+        requireKnowledgeCheckBeforeContinue: false,
+        requireAudioCompletionBeforeContinue: false,
+      },
+    });
+  }
+
   static parseProject(text: string): ScormProject {
     const parsed = JSON.parse(text) as ScormProject;
     return ScormManager.prepareForSave(parsed);
@@ -52,7 +141,13 @@ export class ScormManager {
       },
       aiPrompt: project.aiPrompt || null,
       media: project.media || { images: [], videos: [], audio: [] },
-      scormConfig: project.scormConfig || { version: '1.2', passingScore: 80, completionCriteria: 'passed' },
+      scormConfig: {
+        version: project.scormConfig?.version || '1.2',
+        passingScore: project.scormConfig?.passingScore || 80,
+        completionCriteria: project.scormConfig?.completionCriteria || 'passed',
+        requireKnowledgeCheckBeforeContinue: Boolean(project.scormConfig?.requireKnowledgeCheckBeforeContinue),
+        requireAudioCompletionBeforeContinue: Boolean(project.scormConfig?.requireAudioCompletionBeforeContinue),
+      },
     };
 
     normalized.jsonImportData.validationResult.data = courseContent;
@@ -89,12 +184,25 @@ export class ScormManager {
         if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue;
         try {
           const file = await (entry as any).getFile();
-          const meta = JSON.parse(await file.text()) as MediaItem & { page_id?: string; mimeType?: string };
+          const meta = JSON.parse(await file.text()) as MediaItem & {
+            page_id?: string;
+            project_id?: string;
+            mimeType?: string;
+            originalName?: string;
+            original_name?: string;
+          };
+          if (meta.project_id && meta.project_id !== next.project.id) {
+            logs.push(`Skipped ${entry.name}: belongs to a different project.`);
+            continue;
+          }
           const page = pages.find(p => p.id === meta.page_id);
-          if (page && meta.storageId && !(page.media || []).some(m => m.storageId === meta.storageId)) {
-            page.media = [...(page.media || []), { id: meta.id || meta.storageId, storageId: meta.storageId, type: meta.type, title: meta.title }];
+          const storageId = meta.storageId || meta.id;
+          const type = meta.type || (meta.mimeType?.startsWith('video/') ? 'video' : meta.mimeType?.startsWith('audio/') ? 'audio' : 'image');
+          const title = meta.title || meta.originalName || meta.original_name || storageId;
+          if (page && storageId && !(page.media || []).some(m => m.storageId === storageId)) {
+            page.media = [...(page.media || []), { id: meta.id || storageId, storageId, type, title, url: meta.url || '' }];
             repairedCount += 1;
-            logs.push(`Linked ${meta.storageId} to ${page.title}.`);
+            logs.push(`Linked ${storageId} to ${page.title}.`);
           }
         } catch (error) {
           logs.push(`Skipped malformed asset metadata ${entry.name}.`);

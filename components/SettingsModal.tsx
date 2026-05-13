@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AISettings } from '../types';
 import { Settings, Save, X, Cpu } from 'lucide-react';
+import { GEMINI_MODEL_OPTIONS } from '../constants';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -42,25 +43,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
               onChange={(e) => setLocalSettings({ ...localSettings, model: e.target.value as any })}
               className="w-full p-2 bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
             >
-                <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast & Efficient)</option>
-                <option value="gemini-3-pro-preview">Gemini 3 Pro (Complex Tasks)</option>
+                {GEMINI_MODEL_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
             </select>
           </div>
 
           <div className="pt-2 border-t border-slate-200">
              <h3 className="text-sm font-semibold text-slate-800 mb-3">External API Integrations</h3>
              <div className="bg-amber-50 text-amber-900 border border-amber-200 text-xs p-3 rounded mb-4">
-                 <p className="font-bold mb-1">To use Image and Video search:</p>
+                 <p className="font-bold mb-1">To use image and video search:</p>
                  <ol className="list-decimal pl-4 space-y-1">
-                     <li><strong>Do NOT use the default `gen-lang-client` project.</strong> Google blocks Custom Search on this auto-generated project. You must create a <a href="https://console.cloud.google.com/projectcreate" target="_blank" className="underline font-semibold">new project in Google Cloud Console</a>.</li>
-                     <li>In your new project, search for and enable <strong>Custom Search API</strong> and <strong>YouTube Data API v3</strong>.</li>
-                     <li>Create a restricted API key and add it to `.env.local` as `VITE_GOOGLE_SEARCH_API_KEY`.</li>
-                     <li>Create a Search Engine at <a href="https://programmablesearchengine.google.com" target="_blank" className="underline font-semibold">programmablesearchengine.google.com</a>, enable Image Search, and add the ID to `.env.local` as `VITE_GOOGLE_SEARCH_ENGINE_ID`.</li>
+                     <li>Create a Pixabay API key for image search at <a href="https://pixabay.com/api/docs/" target="_blank" className="underline font-semibold">pixabay.com/api/docs</a>.</li>
+                     <li>Create a Google Cloud project and enable <strong>YouTube Data API v3</strong> if you want YouTube search.</li>
+                     <li>Use restricted test keys in this browser app, because any `VITE_*` key is embedded into the client bundle.</li>
                  </ol>
              </div>
              <div className="space-y-3">
                  <div>
-                     <label className="block text-xs font-medium text-slate-700 mb-1">Google Cloud API Key (Search & YouTube)</label>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Pixabay API Key (Images)</label>
+                     <input 
+                         type="password"
+                         value={localSettings.pixabayApiKey || ''}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, pixabayApiKey: e.target.value }))}
+                         className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         placeholder="5480..."
+                     />
+                 </div>
+                 <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Google API Key (Images + YouTube)</label>
                      <input 
                          type="password"
                          value={localSettings.googleSearchApiKey || ''}
@@ -70,13 +81,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      />
                  </div>
                  <div>
-                     <label className="block text-xs font-medium text-slate-700 mb-1">Search Engine ID (CX)</label>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Google Search Engine ID (CX)</label>
                      <input 
                          type="text"
                          value={localSettings.googleSearchEngineId || ''}
                          onChange={(e) => setLocalSettings(prev => ({ ...prev, googleSearchEngineId: e.target.value }))}
                          className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                         placeholder="e.g. 1234567890abcdef"
+                         placeholder="e.g. c22b6899c08714fb0"
                      />
                  </div>
              </div>

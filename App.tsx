@@ -4,12 +4,14 @@ import { TopicEditor } from './components/TopicEditor';
 import { AssessmentEditor } from './components/AssessmentEditor';
 import { AIGeneratorModal } from './components/AIGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
-import { RichTextEditor } from './components/RichTextEditor';
+import { NewCourseModal, NewCourseRequest } from './components/NewCourseModal';
 import { ScormManager } from './services/scormManager';
 import { ScormPackager } from './services/scormPackager';
-import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject } from './types';
-import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, Box, ShieldCheck, CheckCircle2, ChevronRight } from 'lucide-react';
-import { DEFAULT_GEMINI_MODEL } from './constants';
+import { generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
+import { BinaryDecoder } from './services/binaryDecoder';
+import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus } from './types';
+import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History } from 'lucide-react';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 
 const App: React.FC = () => {
@@ -19,6 +21,14 @@ const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('welcome');
   const [isAIMode, setIsAIMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isNewCourseOpen, setIsNewCourseOpen] = useState(false);
+  const [isCreatingCourse, setIsCreatingCourse] = useState(false);
+  const [newCourseError, setNewCourseError] = useState<string | null>(null);
+  const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string | null>(null);
+  const [restorePointCount, setRestorePointCount] = useState(0);
+  const [pronunciationConfig, setPronunciationConfig] = useState<PronunciationConfig>({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
+  const [batchJob, setBatchJob] = useState<BatchJobType>(null);
+  const [batchProgress, setBatchProgress] = useState<BatchProgressItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -69,9 +79,37 @@ const App: React.FC = () => {
     }
   }, [context?.projectData?.project?.id]); // Depend on ID to run once per loaded project
 
+  useEffect(() => {
+    if (!context?.projectHandle || context.isSandbox || isScanning) return;
+    const timeout = window.setTimeout(async () => {
+      try {
+        const finalProject = ScormManager.prepareForSave(context.projectData);
+        await writeTextFile(context.projectHandle!, JSON.stringify(finalProject, null, 2));
+        await createRestorePoint(context, finalProject, 'autosave');
+        setLastAutoSaveAt(new Date().toLocaleTimeString());
+      } catch (autoSaveError) {
+        console.warn('Autosave failed.', autoSaveError);
+      }
+    }, 8000);
+
+    return () => window.clearTimeout(timeout);
+  }, [context?.projectData, context?.projectHandle, context?.isSandbox, isScanning]);
+
   const processRootHandle = async (currentRootHandle: FileSystemDirectoryHandle, isSandbox: boolean, bypassAutoLoad = false) => {
       setScanResult(null); 
       let discovered: DiscoveredProject[] = [];
+      let discoveredRestorePoints = 0;
+
+      const countRestoreFiles = async (dirHandle: FileSystemDirectoryHandle) => {
+          let count = 0;
+          try {
+              // @ts-ignore browser File System Access API async iterator
+              for await (const entry of dirHandle.values()) {
+                  if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.scormproj')) count += 1;
+              }
+          } catch {}
+          return count;
+      };
 
       const scanInternal = async (dirHandle: FileSystemDirectoryHandle, depth: number) => {
          if (depth > 5) return; // Prevent excessive depth
@@ -81,9 +119,11 @@ const App: React.FC = () => {
 
          // @ts-ignore
          for await (const entry of dirHandle.values()) {
-             if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.scormproj')) {
-               const fileEntry = entry as FileSystemFileHandle;
-               try {
+             const entryName = entry.name.toLowerCase();
+             const isRestoreProject = entryName.includes('_autosave_') || entryName.includes('_manual-save_') || entryName.includes('_created_');
+             if (entry.kind === 'file' && entryName.endsWith('.scormproj') && !isRestoreProject) {
+                const fileEntry = entry as FileSystemFileHandle;
+                try {
                    const file = await fileEntry.getFile();
                    const text = await file.text();
                    const pData = ScormManager.parseProject(text);
@@ -91,10 +131,16 @@ const App: React.FC = () => {
                } catch (e) {
                    console.error("Failed to parse project file:", fileEntry.name, e);
                }
+             } else if (entry.kind === 'file' && entryName.endsWith('.scormproj') && isRestoreProject) {
+                  discoveredRestorePoints += 1;
              } else if (entry.kind === 'directory') {
-                 subDirectories.push(entry as FileSystemDirectoryHandle);
+                  if (entryName === '_restore_points') {
+                      discoveredRestorePoints += await countRestoreFiles(entry as FileSystemDirectoryHandle);
+                  } else {
+                      subDirectories.push(entry as FileSystemDirectoryHandle);
+                  }
              }
-         }
+          }
 
          for (const { pHandle, pData } of projectFiles) {
              let aHandle: FileSystemDirectoryHandle | null = null;
@@ -138,7 +184,10 @@ const App: React.FC = () => {
                  } catch(e) { console.warn("Could not create assets folder"); }
              }
 
-             discovered.push({ projectHandle: pHandle, projectData: pData, assetsHandle: aHandle });
+              const alreadyDiscovered = await Promise.all(discovered.map(item => item.projectHandle.isSameEntry?.(pHandle)));
+              if (!alreadyDiscovered.some(Boolean)) {
+                  discovered.push({ projectHandle: pHandle, projectData: pData, assetsHandle: aHandle });
+              }
          }
 
          // Look directly into subdirectories to find independent projects
@@ -155,6 +204,7 @@ const App: React.FC = () => {
 
       setRootEnvironment({ rootHandle: currentRootHandle, isSandbox });
       setAvailableProjects(discovered);
+      setRestorePointCount(discoveredRestorePoints);
 
       if (discovered.length === 1 && !bypassAutoLoad) {
           loadProject(discovered[0], currentRootHandle, isSandbox);
@@ -173,6 +223,7 @@ const App: React.FC = () => {
           rootHandle: rootH,
           isSandbox: sandbox
       });
+      loadPronunciationConfig(rootH, sandbox);
       setView('welcome');
       setError(null);
   };
@@ -198,28 +249,87 @@ const App: React.FC = () => {
     }
   };
 
-  // Safe File System Opener (Native API)
+  const openFolderUpload = () => fileInputRef.current?.click();
+
+  // Unified opener: prefer native folder access, fall back to browser upload mode.
   const handleOpenFolder = async () => {
-    if (window.self !== window.top) {
-        setError("Preview Frame Detected: Please use 'Sandbox Mode' below to test in this window.");
-        return;
+    setError(null);
+
+    const canUseNativePicker = window.self === window.top && 'showDirectoryPicker' in window;
+    if (!canUseNativePicker) {
+      openFolderUpload();
+      return;
     }
 
     try {
       // @ts-ignore - File System Access API
-      if (!window.showDirectoryPicker) {
-         throw new Error("Native File System API not supported. Use Sandbox Mode.");
-      }
-      // @ts-ignore
       const rootHandle: FileSystemDirectoryHandle = await window.showDirectoryPicker();
       await processRootHandle(rootHandle, false);
-
     } catch (err: any) {
+      if (err.name === 'AbortError') return;
       if (err.name === 'SecurityError' || err.message?.includes('Security')) {
-         setError("Security Error: Use Sandbox Mode below.");
-      } else if (err.name !== 'AbortError') {
-        setError(err.message || "Failed to access folder.");
+        openFolderUpload();
+        return;
       }
+      setError(err.message || "Failed to access folder.");
+    }
+  };
+
+  const sanitizeFileName = (value: string) => value.trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/\s+/g, '_').slice(0, 80) || 'New_Course';
+
+  const writeTextFile = async (handle: FileSystemFileHandle, text: string) => {
+    const writable = await (handle as any).createWritable({ keepExistingData: false });
+    await writable.write(text);
+    await writable.close();
+  };
+
+  const createRestorePoint = async (ctx: ProjectContext, project: ScormProject, reason = 'autosave') => {
+    if (!ctx.rootHandle || ctx.isSandbox) return;
+    try {
+      const restoreDir = await ctx.rootHandle.getDirectoryHandle('_restore_points', { create: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const restoreHandle = await restoreDir.getFileHandle(`${sanitizeFileName(project.project.name)}_${reason}_${stamp}.scormproj`, { create: true });
+      await writeTextFile(restoreHandle, JSON.stringify(project, null, 2));
+    } catch (restoreError) {
+      console.warn('Could not create restore point.', restoreError);
+    }
+  };
+
+  const normalizePronunciationConfig = (value: Partial<PronunciationConfig> | null | undefined): PronunciationConfig => ({
+    tts: { ...DEFAULT_TTS_SETTINGS, ...(value?.tts || {}) },
+    pronunciations: Array.isArray(value?.pronunciations) ? value.pronunciations : [],
+  });
+
+  const loadPronunciationConfig = async (rootHandle: FileSystemDirectoryHandle | null, sandbox: boolean) => {
+    if (!rootHandle || sandbox) {
+      setPronunciationConfig({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
+      return;
+    }
+    try {
+      const handle = await rootHandle.getFileHandle('pronunciations.json');
+      const file = await handle.getFile();
+      setPronunciationConfig(normalizePronunciationConfig(JSON.parse(await file.text())));
+    } catch {
+      const initial = { tts: DEFAULT_TTS_SETTINGS, pronunciations: [] };
+      setPronunciationConfig(initial);
+      try {
+        const handle = await rootHandle.getFileHandle('pronunciations.json', { create: true });
+        await writeTextFile(handle, JSON.stringify(initial, null, 2));
+      } catch (writeError) {
+        console.warn('Could not create pronunciations.json.', writeError);
+      }
+    }
+  };
+
+  const savePronunciationConfig = async (nextConfig: PronunciationConfig) => {
+    const normalized = normalizePronunciationConfig(nextConfig);
+    setPronunciationConfig(normalized);
+    if (!context?.rootHandle || context.isSandbox) return;
+    try {
+      const handle = await context.rootHandle.getFileHandle('pronunciations.json', { create: true });
+      await writeTextFile(handle, JSON.stringify(normalized, null, 2));
+    } catch (error) {
+      console.warn('Could not save pronunciations.json.', error);
     }
   };
 
@@ -235,6 +345,58 @@ const App: React.FC = () => {
       }
   };
 
+  const handleCreateNewCourse = async (request: NewCourseRequest) => {
+    setIsCreatingCourse(true);
+    setNewCourseError(null);
+    try {
+      if (!('showDirectoryPicker' in window) || window.self !== window.top) {
+        throw new Error('Creating a new course requires direct folder access in Chrome or Edge. Open the app in a normal browser tab and try again.');
+      }
+
+      // @ts-ignore - File System Access API
+      const rootHandle: FileSystemDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const courseFolderName = sanitizeFileName(request.courseName);
+      const courseFolderHandle = await rootHandle.getDirectoryHandle(courseFolderName, { create: true });
+      const assetsHandle = await courseFolderHandle.getDirectoryHandle('media', { create: true });
+      await courseFolderHandle.getDirectoryHandle('_restore_points', { create: true });
+      const initialPronunciationConfig = { tts: DEFAULT_TTS_SETTINGS, pronunciations: [] };
+      const pronunciationHandle = await courseFolderHandle.getFileHandle('pronunciations.json', { create: true });
+      await writeTextFile(pronunciationHandle, JSON.stringify(initialPronunciationConfig, null, 2));
+
+      const generationSettings = { ...aiSettings, model: request.model };
+      const generatedContent = request.mode === 'ai'
+        ? await generateCourseContent(generationSettings, request.courseName, request.topics, request.difficulty, request.referenceFiles, request.rateLimit)
+        : undefined;
+      const project = ScormManager.createProject(request.courseName, request.topics, request.difficulty, generatedContent);
+      const fileName = `${courseFolderName}.scormproj`;
+      const projectHandle = await courseFolderHandle.getFileHandle(fileName, { create: true });
+      await writeTextFile(projectHandle, JSON.stringify(project, null, 2));
+
+      const nextContext: ProjectContext = {
+        projectData: project,
+        projectHandle,
+        assetsHandle,
+        rootHandle: courseFolderHandle,
+        isSandbox: false
+      };
+      await createRestorePoint(nextContext, project, 'created');
+      setRootEnvironment({ rootHandle, isSandbox: false });
+      setAvailableProjects([{ projectHandle, projectData: project, assetsHandle }]);
+      setContext(nextContext);
+      setPronunciationConfig(initialPronunciationConfig);
+      setScanResult(null);
+      setView('welcome');
+      setIsNewCourseOpen(false);
+      setLastAutoSaveAt(new Date().toLocaleTimeString());
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        setNewCourseError(err.message || 'Failed to create course.');
+      }
+    } finally {
+      setIsCreatingCourse(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!context || !context.projectHandle) return;
     if (isScanning) {
@@ -246,16 +408,15 @@ const App: React.FC = () => {
       const finalProject = ScormManager.prepareForSave(context.projectData);
       const jsonString = JSON.stringify(finalProject, null, 2);
       
-      const writable = await context.projectHandle.createWritable({ keepExistingData: false });
-      await writable.write(jsonString);
-      await writable.close();
+      await writeTextFile(context.projectHandle, jsonString);
+      await createRestorePoint(context, finalProject, 'manual-save');
       
       setContext({ ...context, projectData: finalProject });
       
       if (context.isSandbox) {
           // In Sandbox, we must download the file because we can't persist to disk
           ScormManager.downloadProject(finalProject);
-          alert("Project saved to memory. Download started (Sandbox Mode).");
+          alert("Project saved in this browser session. Download started.");
       } else {
           alert("Project saved successfully to disk.");
       }
@@ -340,6 +501,171 @@ const App: React.FC = () => {
     });
   };
 
+  const getEditablePages = (project: ScormProject) => [
+    project.courseContent.welcomePage,
+    project.courseContent.learningObjectivesPage,
+    ...project.courseContent.topics,
+  ];
+
+  const buildBatchProgress = (pages: Array<Topic | WelcomePage | LearningObjectivesPage>): BatchProgressItem[] => pages.map(page => ({
+    pageId: page.id,
+    title: page.title,
+    audioStatus: (page.media || []).some(media => media.type === 'audio') ? 'done' : 'pending',
+    captionStatus: page.caption ? 'done' : 'pending',
+  }));
+
+  const updateBatchProgressItem = (pageId: string, patch: Partial<Pick<BatchProgressItem, 'audioStatus' | 'captionStatus' | 'message'>>) => {
+    setBatchProgress(prev => prev.map(item => item.pageId === pageId ? { ...item, ...patch } : item));
+  };
+
+  const replacePagesInProject = (
+    project: ScormProject,
+    pagesById: Map<string, Topic | WelcomePage | LearningObjectivesPage>
+  ): ScormProject => ({
+    ...project,
+    courseContent: {
+      ...project.courseContent,
+      welcomePage: (pagesById.get(project.courseContent.welcomePage.id) as WelcomePage) || project.courseContent.welcomePage,
+      learningObjectivesPage: (pagesById.get(project.courseContent.learningObjectivesPage.id) as LearningObjectivesPage) || project.courseContent.learningObjectivesPage,
+      topics: project.courseContent.topics.map(topic => (pagesById.get(topic.id) as Topic) || topic),
+    }
+  });
+
+  const createAudioAssetForPage = async (page: Topic | WelcomePage | LearningObjectivesPage): Promise<Topic | WelcomePage | LearningObjectivesPage> => {
+    if (!page.narration?.trim()) return page;
+    const audioBlob = await generateNarrationAudio(aiSettings, page.narration, pronunciationConfig.tts, pronunciationConfig.pronunciations);
+    const storageId = ScormManager.generateStorageId('audio');
+    const file = new File([audioBlob], `${storageId}.wav`, { type: 'audio/wav' });
+    await handleAssetCreate(file, storageId);
+
+      const metadata = {
+        id: storageId,
+        storageId,
+        project_id: context.projectData.project.id,
+        page_id: page.id,
+      type: 'audio',
+      title: `Narration: ${page.title}`,
+      originalName: `${storageId}.wav`,
+      original_name: `${storageId}.wav`,
+      mimeType: 'audio/wav',
+      extension: 'wav',
+      source: 'gemini-tts',
+      created: new Date().toISOString()
+    };
+    await handleAssetCreate(new File([JSON.stringify(metadata, null, 2)], `${storageId}.json`, { type: 'application/json' }), storageId);
+
+    const newMedia: MediaItem = {
+      id: `media-${Date.now()}-${storageId}`,
+      storageId,
+      type: 'audio',
+      title: `Narration: ${page.title}`,
+      url: ''
+    };
+    return { ...page, media: [...(page.media || []).filter(media => media.type !== 'audio'), newMedia] };
+  };
+
+  const findAssetFile = async (storageId: string) => {
+    if (!context?.assetsHandle) return null;
+    const lowerId = storageId.toLowerCase();
+    // @ts-ignore
+    for await (const entry of context.assetsHandle.values()) {
+      if (entry.kind !== 'file') continue;
+      const name = entry.name.toLowerCase();
+      if (name === lowerId || name.startsWith(`${lowerId}.`)) return entry as FileSystemFileHandle;
+    }
+    return null;
+  };
+
+  const findAssetMetadata = async (storageId: string) => {
+    if (!context?.assetsHandle) return null;
+    try {
+      const handle = await context.assetsHandle.getFileHandle(`${storageId}.json`);
+      return JSON.parse(await (await handle.getFile()).text());
+    } catch {
+      return null;
+    }
+  };
+
+  const handleBatchGenerateTts = async () => {
+    if (!context?.assetsHandle) return;
+    const pages = getEditablePages(context.projectData);
+    setBatchJob('tts');
+    setBatchProgress(buildBatchProgress(pages));
+    try {
+      const pagesById = new Map<string, Topic | WelcomePage | LearningObjectivesPage>();
+      for (const page of pages) {
+        if (!page.narration?.trim()) {
+          updateBatchProgressItem(page.id, { audioStatus: 'skipped', message: 'No narration script.' });
+          continue;
+        }
+        updateBatchProgressItem(page.id, { audioStatus: 'running' });
+        try {
+          pagesById.set(page.id, await createAudioAssetForPage(page));
+          updateBatchProgressItem(page.id, { audioStatus: 'done' });
+        } catch (error: any) {
+          updateBatchProgressItem(page.id, { audioStatus: 'error', message: error.message || String(error) });
+          throw error;
+        }
+      }
+      updateProjectData(project => replacePagesInProject(project, pagesById));
+      alert(`Batch TTS complete. Generated audio for ${pagesById.size} pages.`);
+    } catch (error: any) {
+      console.error(error);
+      alert(`Batch TTS failed: ${error.message || error}`);
+    } finally {
+      setBatchJob(null);
+    }
+  };
+
+  const handleBatchGenerateCaptions = async () => {
+    if (!context?.assetsHandle) return;
+    const pages = getEditablePages(context.projectData);
+    setBatchJob('captions');
+    setBatchProgress(buildBatchProgress(pages));
+    try {
+      const pagesById = new Map<string, Topic | WelcomePage | LearningObjectivesPage>();
+      let captionCount = 0;
+      let skippedCount = 0;
+
+      for (const page of pages) {
+        const audioItem = (page.media || []).find(media => media.type === 'audio');
+        if (!audioItem) {
+          skippedCount += 1;
+          updateBatchProgressItem(page.id, { captionStatus: 'skipped', message: 'No linked audio.' });
+          continue;
+        }
+        const fileHandle = await findAssetFile(audioItem.storageId);
+        if (!fileHandle) {
+          skippedCount += 1;
+          updateBatchProgressItem(page.id, { captionStatus: 'skipped', message: 'Audio file not found.' });
+          continue;
+        }
+        updateBatchProgressItem(page.id, { captionStatus: 'running' });
+        try {
+          const meta = await findAssetMetadata(audioItem.storageId);
+          const file = await fileHandle.getFile();
+          const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, 'audio', meta?.mimeType);
+          const audioFile = new File([blob], file.name, { type: mimeType || meta?.mimeType || 'audio/wav' });
+          const caption = await transcribeAudioToVTT(audioFile);
+          pagesById.set(page.id, { ...page, caption });
+          captionCount += 1;
+          updateBatchProgressItem(page.id, { captionStatus: 'done' });
+        } catch (error: any) {
+          updateBatchProgressItem(page.id, { captionStatus: 'error', message: error.message || String(error) });
+          throw error;
+        }
+      }
+
+      updateProjectData(project => replacePagesInProject(project, pagesById));
+      alert(`Batch VTT complete. Generated captions for ${captionCount} pages. Skipped ${skippedCount} pages without usable audio.`);
+    } catch (error: any) {
+      console.error(error);
+      alert(`Batch VTT failed: ${error.message || error}`);
+    } finally {
+      setBatchJob(null);
+    }
+  };
+
   const addAITopic = (partialTopic: Partial<Topic>) => {
     updateProjectData(prev => {
         const newTopic: Topic = {
@@ -387,6 +713,13 @@ const App: React.FC = () => {
             onAssetCreate={handleAssetCreate}
             aiSettings={aiSettings}
             label="Welcome Page"
+            projectId={projectData.project.id}
+            pronunciationConfig={pronunciationConfig}
+            onPronunciationConfigChange={savePronunciationConfig}
+            onBatchGenerateTts={handleBatchGenerateTts}
+            onBatchGenerateCaptions={handleBatchGenerateCaptions}
+            batchJob={batchJob}
+            batchProgress={batchProgress}
         />
       );
     }
@@ -400,6 +733,13 @@ const App: React.FC = () => {
                 onAssetCreate={handleAssetCreate}
                 aiSettings={aiSettings}
                 label="Learning Objectives"
+                projectId={projectData.project.id}
+                pronunciationConfig={pronunciationConfig}
+                onPronunciationConfigChange={savePronunciationConfig}
+                onBatchGenerateTts={handleBatchGenerateTts}
+                onBatchGenerateCaptions={handleBatchGenerateCaptions}
+                batchJob={batchJob}
+                batchProgress={batchProgress}
             />
           );
     }
@@ -471,6 +811,48 @@ const App: React.FC = () => {
                         className="w-full p-2 border rounded bg-slate-100 text-slate-500 cursor-not-allowed"
                     />
                 </div>
+                <div className="pt-4 border-t border-slate-200">
+                    <h3 className="text-lg font-semibold text-slate-900 mb-2">Course Settings for SCORM Output</h3>
+                    <p className="text-sm text-slate-600 mb-4">
+                        These settings are enforced inside the exported Moodle SCORM package.
+                    </p>
+                    <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 mb-3 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={Boolean(projectData.scormConfig.requireKnowledgeCheckBeforeContinue)}
+                            onChange={(e) => updateProjectData(p => ({
+                                ...p,
+                                scormConfig: {
+                                    ...p.scormConfig,
+                                    requireKnowledgeCheckBeforeContinue: e.target.checked,
+                                }
+                            }))}
+                            className="mt-1"
+                        />
+                        <span>
+                            <span className="block font-semibold text-slate-900">Require knowledge check before continuing</span>
+                            <span className="block text-sm text-slate-600">Learners must submit the page knowledge check correctly before Next unlocks.</span>
+                        </span>
+                    </label>
+                    <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={Boolean(projectData.scormConfig.requireAudioCompletionBeforeContinue)}
+                            onChange={(e) => updateProjectData(p => ({
+                                ...p,
+                                scormConfig: {
+                                    ...p.scormConfig,
+                                    requireAudioCompletionBeforeContinue: e.target.checked,
+                                }
+                            }))}
+                            className="mt-1"
+                        />
+                        <span>
+                            <span className="block font-semibold text-slate-900">Require full narration audio before continuing</span>
+                            <span className="block text-sm text-slate-600">Learners must play each page's narration to the end before Next unlocks.</span>
+                        </span>
+                    </label>
+                </div>
             </div>
         )
     }
@@ -486,6 +868,13 @@ const App: React.FC = () => {
               onAssetCreate={handleAssetCreate}
               aiSettings={aiSettings}
               label="Topic Editor"
+              projectId={projectData.project.id}
+              pronunciationConfig={pronunciationConfig}
+              onPronunciationConfigChange={savePronunciationConfig}
+              onBatchGenerateTts={handleBatchGenerateTts}
+              onBatchGenerateCaptions={handleBatchGenerateCaptions}
+              batchJob={batchJob}
+              batchProgress={batchProgress}
            />
         );
       }
@@ -497,7 +886,7 @@ const App: React.FC = () => {
   // Login / Load Screen
   if (!context && view !== 'project-select') {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+      <div className="theme-dark min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
          <div className="bg-white p-10 rounded-xl shadow-xl max-w-lg w-full text-center space-y-6">
             <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
                 <FolderOpen className="w-8 h-8" />
@@ -507,28 +896,19 @@ const App: React.FC = () => {
                 Open your project <strong>folder</strong>. The app will detect the <code>.scormproj</code> file and the <code>media</code> folder automatically.
             </p>
             
-            {/* Native Open Button */}
             <button 
                 onClick={handleOpenFolder}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
             >
                 <FolderOpen className="w-5 h-5" />
-                Open Folder (Native)
+                Open Project Folder
             </button>
-            
-            <div className="relative flex py-2 items-center">
-                <div className="flex-grow border-t border-slate-200"></div>
-                <span className="flex-shrink-0 mx-4 text-slate-400 text-xs uppercase">or</span>
-                <div className="flex-grow border-t border-slate-200"></div>
-            </div>
-            
-            {/* Sandbox Open Button */}
             <button 
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-lg shadow-sm border border-slate-300 transition-all flex items-center justify-center gap-2"
+                onClick={() => setIsNewCourseOpen(true)}
+                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
             >
-                <Box className="w-5 h-5" />
-                Open Sandbox (Preview Mode)
+                <FilePlus2 className="w-5 h-5" />
+                Create New Course
             </button>
             <input 
                 ref={fileInputRef}
@@ -549,10 +929,17 @@ const App: React.FC = () => {
             )}
             
             <p className="text-xs text-slate-400 mt-4">
-              <strong>Native Mode:</strong> Requires Chrome/Edge & top-level window.<br/>
-              <strong>Sandbox Mode:</strong> Works in preview frames. Changes are downloaded on save.
+              Direct folder access is used when the browser allows it. Otherwise, the app opens the folder in browser-session mode and downloads the updated project file when you save.
             </p>
          </div>
+         <NewCourseModal
+            isOpen={isNewCourseOpen}
+            isCreating={isCreatingCourse}
+            error={newCourseError}
+            aiSettings={aiSettings}
+            onClose={() => setIsNewCourseOpen(false)}
+            onCreate={handleCreateNewCourse}
+         />
       </div>
     );
   }
@@ -560,7 +947,7 @@ const App: React.FC = () => {
   // Project Select Screen
   if (!context && view === 'project-select') {
      return (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center py-12 px-6">
+        <div className="theme-dark min-h-screen bg-slate-50 flex flex-col items-center py-12 px-6">
             <div className="max-w-4xl w-full">
                 <div className="flex justify-between items-center mb-8">
                     <h1 className="text-3xl font-bold text-slate-800">Select Project to Load</h1>
@@ -589,6 +976,22 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     ))}
+                    {restorePointCount > 0 && (
+                        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center opacity-90">
+                            <div>
+                                <h3 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                                    <History className="w-5 h-5 text-blue-600" />
+                                    Restore Points
+                                </h3>
+                                <p className="text-sm text-slate-500 mt-1">
+                                    {restorePointCount} timeline backups stored in _restore_points
+                                </p>
+                            </div>
+                            <div className="w-10 h-10 bg-slate-50 rounded-full flex items-center justify-center text-slate-400">
+                                <History className="w-5 h-5" />
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -596,7 +999,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
+    <div className="theme-dark flex h-screen bg-slate-50 overflow-hidden font-sans">
       <Sidebar 
         project={context.projectData} 
         currentView={view} 
@@ -607,10 +1010,10 @@ const App: React.FC = () => {
       />
       
       <main className="flex-1 overflow-y-auto relative">
-         {/* Sandbox Indicator */}
+         {/* Browser-session indicator */}
          {context.isSandbox && (
              <div className="bg-amber-100 text-amber-800 text-xs font-bold text-center py-1 border-b border-amber-200">
-                 SANDBOX MODE: Changes are stored in memory and downloaded on Save.
+                 BROWSER SESSION: Changes stay in memory and the updated project file downloads on Save.
              </div>
          )}
          
@@ -628,6 +1031,12 @@ const App: React.FC = () => {
              }`}>
                  <ShieldCheck className="w-4 h-4" />
                  Integrity Scan Complete. Repaired {scanResult.count} items from disk.
+             </div>
+         )}
+
+         {lastAutoSaveAt && !context.isSandbox && (
+             <div className="bg-emerald-50 text-emerald-700 text-xs font-semibold text-center py-1 border-b border-emerald-100">
+                 Autosaved with restore point at {lastAutoSaveAt}
              </div>
          )}
          
@@ -660,6 +1069,14 @@ const App: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         settings={aiSettings}
         onSave={saveAiSettings}
+      />
+      <NewCourseModal
+        isOpen={isNewCourseOpen}
+        isCreating={isCreatingCourse}
+        error={newCourseError}
+        aiSettings={aiSettings}
+        onClose={() => setIsNewCourseOpen(false)}
+        onCreate={handleCreateNewCourse}
       />
     </div>
   );

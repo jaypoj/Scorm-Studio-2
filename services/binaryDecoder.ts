@@ -14,7 +14,12 @@ export class BinaryDecoder {
       jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
       mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', webm: expectedType === 'audio' ? 'audio/webm' : 'video/webm',
       mp4: 'video/mp4', mov: 'video/quicktime', vtt: 'text/vtt', json: 'application/json',
+      bin: expectedType === 'image' ? 'image/png' : expectedType === 'audio' ? 'audio/wav' : expectedType === 'video' ? 'video/mp4' : 'application/octet-stream',
     };
-    return ext ? byExt[ext] || '' : '';
+    if (ext && byExt[ext]) return byExt[ext];
+    if (expectedType === 'image') return 'image/png';
+    if (expectedType === 'audio') return 'audio/wav';
+    if (expectedType === 'video') return 'video/mp4';
+    return '';
   }
 }
