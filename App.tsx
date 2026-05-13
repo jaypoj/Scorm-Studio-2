@@ -350,12 +350,19 @@ const App: React.FC = () => {
     setIsCreatingCourse(true);
     setNewCourseError(null);
     try {
-      if (!('showDirectoryPicker' in window) || window.self !== window.top) {
-        throw new Error('Creating a new course requires direct folder access in Chrome or Edge. Open the app in a normal browser tab and try again.');
+      let rootHandle = context && !context.isSandbox ? context.rootHandle : null;
+      rootHandle = rootHandle || (rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle : null);
+      if (!rootHandle && request.mode === 'powerpoint') {
+        throw new Error('PowerPoint import needs an open working folder first. Click Open Project Folder, select your SCORM Projects folder, then create the PowerPoint course again.');
       }
+      if (!rootHandle) {
+        if (!('showDirectoryPicker' in window) || window.self !== window.top) {
+          throw new Error('Creating a new course requires direct folder access in Chrome or Edge. Open the app in a normal browser tab and try again.');
+        }
 
-      // @ts-ignore - File System Access API
-      const rootHandle: FileSystemDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        // @ts-ignore - File System Access API
+        rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      }
       const courseFolderName = sanitizeFileName(request.courseName);
       const courseFolderHandle = await rootHandle.getDirectoryHandle(courseFolderName, { create: true });
       const assetsHandle = await courseFolderHandle.getDirectoryHandle('media', { create: true });
