@@ -20,6 +20,7 @@ interface NewCourseModalProps {
   error: string | null;
   status: string | null;
   aiSettings: AISettings;
+  allowPowerPointImport?: boolean;
   onClose: () => void;
   onCreate: (request: NewCourseRequest) => Promise<void>;
 }
@@ -35,7 +36,7 @@ const RATE_LIMIT_OPTIONS: { value: AiRateLimitLevel; label: string; helper: stri
 const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.json,.md,.html,.htm,.ppt,.pptx';
 const ACCEPTED_POWERPOINT_TYPES = '.ppt,.pptx';
 
-export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, aiSettings, onClose, onCreate }) => {
+export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, aiSettings, allowPowerPointImport = false, onClose, onCreate }) => {
   const [courseName, setCourseName] = useState('');
   const [difficulty, setDifficulty] = useState(3);
   const [topicText, setTopicText] = useState('');
@@ -48,6 +49,13 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
   useEffect(() => {
     if (isOpen) setModel(aiSettings.model || DEFAULT_GEMINI_MODEL);
   }, [aiSettings.model, isOpen]);
+
+  useEffect(() => {
+    if (isOpen && !allowPowerPointImport && mode === 'powerpoint') {
+      setMode('ai');
+      setPowerPointFile(null);
+    }
+  }, [allowPowerPointImport, isOpen, mode]);
 
   if (!isOpen) return null;
 
@@ -93,7 +101,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className={`grid grid-cols-1 ${allowPowerPointImport ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-3`}>
             <button
               onClick={() => setMode('ai')}
               className={`p-4 border rounded-lg text-left transition-colors ${mode === 'ai' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
@@ -101,13 +109,15 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
               <div className="font-semibold text-slate-900 flex items-center gap-2"><Bot className="w-4 h-4" /> Build with AI</div>
               <p className="text-xs text-slate-600 mt-1">Generate welcome, objectives, topic pages, knowledge checks, image prompts, video terms, and final quiz.</p>
             </button>
-            <button
-              onClick={() => setMode('powerpoint')}
-              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'powerpoint' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
-            >
-              <div className="font-semibold text-slate-900 flex items-center gap-2"><Presentation className="w-4 h-4" /> Import PowerPoint</div>
-              <p className="text-xs text-slate-600 mt-1">Convert each slide into an editable course page and copy slide media into the project.</p>
-            </button>
+            {allowPowerPointImport && (
+              <button
+                onClick={() => setMode('powerpoint')}
+                className={`p-4 border rounded-lg text-left transition-colors ${mode === 'powerpoint' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              >
+                <div className="font-semibold text-slate-900 flex items-center gap-2"><Presentation className="w-4 h-4" /> Import PowerPoint</div>
+                <p className="text-xs text-slate-600 mt-1">Convert each slide into an editable course page and copy slide media into the project.</p>
+              </button>
+            )}
             <button
               onClick={() => setMode('manual')}
               className={`p-4 border rounded-lg text-left transition-colors ${mode === 'manual' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}

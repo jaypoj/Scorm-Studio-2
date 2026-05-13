@@ -1020,15 +1020,16 @@ const App: React.FC = () => {
               Direct folder access is used when the browser allows it. Otherwise, the app opens the folder in browser-session mode and downloads the updated project file when you save.
             </p>
          </div>
-         <NewCourseModal
+          <NewCourseModal
              isOpen={isNewCourseOpen}
              isCreating={isCreatingCourse}
              error={newCourseError}
              status={newCourseStatus}
              aiSettings={aiSettings}
-            onClose={() => setIsNewCourseOpen(false)}
-            onCreate={handleCreateNewCourse}
-         />
+             allowPowerPointImport={Boolean(rootEnvironment && !rootEnvironment.isSandbox)}
+             onClose={() => setIsNewCourseOpen(false)}
+             onCreate={handleCreateNewCourse}
+          />
       </div>
     );
   }
@@ -1098,6 +1099,16 @@ const App: React.FC = () => {
                         </div>
                     )}
                 </div>
+                <NewCourseModal
+                    isOpen={isNewCourseOpen}
+                    isCreating={isCreatingCourse}
+                    error={newCourseError}
+                    status={newCourseStatus}
+                    aiSettings={aiSettings}
+                    allowPowerPointImport={Boolean(rootEnvironment && !rootEnvironment.isSandbox)}
+                    onClose={() => setIsNewCourseOpen(false)}
+                    onCreate={handleCreateNewCourse}
+                />
             </div>
         </div>
      );
@@ -1186,6 +1197,7 @@ const App: React.FC = () => {
         error={newCourseError}
         status={newCourseStatus}
         aiSettings={aiSettings}
+        allowPowerPointImport={Boolean(context && !context.isSandbox)}
         onClose={() => setIsNewCourseOpen(false)}
         onCreate={handleCreateNewCourse}
       />
