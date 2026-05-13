@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, BookOpen, FileText, Loader2, Upload, X } from 'lucide-react';
+import { Bot, BookOpen, FileText, Loader2, Presentation, Upload, X } from 'lucide-react';
 import { AISettings, AiRateLimitLevel } from '../types';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_OPTIONS } from '../constants';
 
@@ -7,10 +7,11 @@ export interface NewCourseRequest {
   courseName: string;
   difficulty: number;
   topics: string[];
-  mode: 'ai' | 'manual';
+  mode: 'ai' | 'manual' | 'powerpoint';
   model: string;
   rateLimit: AiRateLimitLevel;
   referenceFiles: File[];
+  powerPointFile: File | null;
 }
 
 interface NewCourseModalProps {
@@ -30,16 +31,18 @@ const RATE_LIMIT_OPTIONS: { value: AiRateLimitLevel; label: string; helper: stri
   { value: 'full', label: 'Full', helper: 'No limits: sends the most context the app can reasonably fit.' },
 ];
 
-const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.json,.md,.html,.htm';
+const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.json,.md,.html,.htm,.ppt,.pptx';
+const ACCEPTED_POWERPOINT_TYPES = '.ppt,.pptx';
 
 export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, aiSettings, onClose, onCreate }) => {
   const [courseName, setCourseName] = useState('');
   const [difficulty, setDifficulty] = useState(3);
   const [topicText, setTopicText] = useState('');
-  const [mode, setMode] = useState<'ai' | 'manual'>('ai');
+  const [mode, setMode] = useState<'ai' | 'manual' | 'powerpoint'>('ai');
   const [model, setModel] = useState(aiSettings.model || DEFAULT_GEMINI_MODEL);
   const [rateLimit, setRateLimit] = useState<AiRateLimitLevel>('medium');
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
+  const [powerPointFile, setPowerPointFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (isOpen) setModel(aiSettings.model || DEFAULT_GEMINI_MODEL);
@@ -48,7 +51,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
   if (!isOpen) return null;
 
   const topics = topicText.split('\n').map(topic => topic.trim().replace(/^[-*]\s*/, '')).filter(Boolean);
-  const canCreate = courseName.trim().length > 0 && (mode === 'manual' || topics.length > 0);
+  const canCreate = courseName.trim().length > 0 && (mode === 'manual' || mode === 'powerpoint' ? true : topics.length > 0) && (mode !== 'powerpoint' || Boolean(powerPointFile));
   const selectedRateLimit = RATE_LIMIT_OPTIONS.find(option => option.value === rateLimit) || RATE_LIMIT_OPTIONS[2];
   const addReferenceFiles = (files: FileList | File[]) => {
     const incoming = Array.from(files);
@@ -87,13 +90,20 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <button
               onClick={() => setMode('ai')}
               className={`p-4 border rounded-lg text-left transition-colors ${mode === 'ai' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
             >
               <div className="font-semibold text-slate-900 flex items-center gap-2"><Bot className="w-4 h-4" /> Build with AI</div>
               <p className="text-xs text-slate-600 mt-1">Generate welcome, objectives, topic pages, knowledge checks, image prompts, video terms, and final quiz.</p>
+            </button>
+            <button
+              onClick={() => setMode('powerpoint')}
+              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'powerpoint' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+            >
+              <div className="font-semibold text-slate-900 flex items-center gap-2"><Presentation className="w-4 h-4" /> Import PowerPoint</div>
+              <p className="text-xs text-slate-600 mt-1">Convert each slide into an editable course page and copy slide media into the project.</p>
             </button>
             <button
               onClick={() => setMode('manual')}
@@ -103,6 +113,47 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
               <p className="text-xs text-slate-600 mt-1">Create the project file, media folder, restore folder, and starter pages for the topics you list.</p>
             </button>
           </div>
+
+          {mode === 'powerpoint' && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">PowerPoint File</label>
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const file = Array.from(e.dataTransfer.files as FileList).find((item: File) => /\.(pptx?|PPTX?)$/.test(item.name));
+                  if (file) setPowerPointFile(file);
+                }}
+                className="border-2 border-dashed border-orange-300 rounded-lg bg-orange-50 p-4 text-center"
+              >
+                <Presentation className="w-6 h-6 mx-auto text-orange-500 mb-2" />
+                <p className="text-sm font-medium text-slate-700">Drop a .pptx file here, or browse</p>
+                <p className="text-xs text-slate-500 mt-1">Best support is for .pptx. Legacy .ppt files must be saved/exported as .pptx before import.</p>
+                <label className="inline-flex mt-3 px-3 py-2 bg-white border border-orange-200 rounded text-sm font-semibold text-slate-700 hover:bg-orange-100 cursor-pointer">
+                  Browse PowerPoint
+                  <input
+                    type="file"
+                    accept={ACCEPTED_POWERPOINT_TYPES}
+                    className="hidden"
+                    onChange={(e) => {
+                      setPowerPointFile(e.target.files?.[0] || null);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+              {powerPointFile && (
+                <div className="mt-3 flex items-center justify-between gap-3 p-2 bg-white border border-orange-200 rounded text-sm">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Presentation className="w-4 h-4 text-orange-500 shrink-0" />
+                    <span className="truncate text-slate-800">{powerPointFile.name}</span>
+                    <span className="text-xs text-slate-400 shrink-0">{Math.max(1, Math.round(powerPointFile.size / 1024))} KB</span>
+                  </span>
+                  <button onClick={() => setPowerPointFile(null)} className="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {mode === 'ai' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 border border-blue-100 rounded-lg bg-blue-50/60">
@@ -138,7 +189,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             </div>
           )}
 
-          <div>
+          {mode !== 'powerpoint' && <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Topics</label>
             <textarea
               value={topicText}
@@ -147,7 +198,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
               className="w-full p-3 bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
               placeholder={'One topic per line\nSetting up standardized Bluebeam tool chests\nProfessional annotation and markup techniques\nCalibration and linear measurement tools'}
             />
-          </div>
+          </div>}
 
           {mode === 'ai' && (
             <div>
@@ -220,11 +271,11 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
 
         <div className="p-5 border-t border-slate-200 bg-slate-50">
           <button
-            onClick={() => onCreate({ courseName: courseName.trim(), difficulty, topics, mode, model, rateLimit, referenceFiles })}
+            onClick={() => onCreate({ courseName: courseName.trim(), difficulty, topics, mode, model, rateLimit, referenceFiles, powerPointFile })}
             disabled={!canCreate || isCreating}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold flex items-center justify-center gap-2"
           >
-            {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === 'ai' ? <Bot className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
+            {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === 'ai' ? <Bot className="w-4 h-4" /> : mode === 'powerpoint' ? <Presentation className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
             {isCreating ? 'Creating Course...' : 'Choose Folder & Create Course'}
           </button>
         </div>

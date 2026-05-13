@@ -8,6 +8,7 @@ import { NewCourseModal, NewCourseRequest } from './components/NewCourseModal';
 import { ScormManager } from './services/scormManager';
 import { ScormPackager } from './services/scormPackager';
 import { generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
+import { importPowerPointCourse } from './services/powerPointImporter';
 import { BinaryDecoder } from './services/binaryDecoder';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus } from './types';
 import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
@@ -364,10 +365,26 @@ const App: React.FC = () => {
       await writeTextFile(pronunciationHandle, JSON.stringify(initialPronunciationConfig, null, 2));
 
       const generationSettings = { ...aiSettings, model: request.model };
+      const importedPowerPoint = request.mode === 'powerpoint' && request.powerPointFile
+        ? await importPowerPointCourse(request.powerPointFile, request.courseName)
+        : null;
       const generatedContent = request.mode === 'ai'
         ? await generateCourseContent(generationSettings, request.courseName, request.topics, request.difficulty, request.referenceFiles, request.rateLimit)
-        : undefined;
-      const project = ScormManager.createProject(request.courseName, request.topics, request.difficulty, generatedContent);
+        : importedPowerPoint?.courseContent;
+      const projectTopics = importedPowerPoint?.topics || request.topics;
+      const project = ScormManager.createProject(request.courseName, projectTopics, request.difficulty, generatedContent);
+
+      if (importedPowerPoint) {
+        for (const media of importedPowerPoint.mediaFiles) {
+          const fileHandle = await assetsHandle.getFileHandle(media.file.name, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(media.file);
+          await writable.close();
+        }
+        if (importedPowerPoint.warnings.length) {
+          console.warn('PowerPoint import warnings:', importedPowerPoint.warnings);
+        }
+      }
       const fileName = `${courseFolderName}.scormproj`;
       const projectHandle = await courseFolderHandle.getFileHandle(fileName, { create: true });
       await writeTextFile(projectHandle, JSON.stringify(project, null, 2));
