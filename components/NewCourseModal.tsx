@@ -266,7 +266,10 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
           </div>
 
           {(status || error) && (
-            <div className={`p-3 text-sm rounded border ${error ? 'bg-red-50 text-red-700 border-red-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+            <div
+              className={`p-3 text-sm rounded border ${error ? 'border-red-400' : 'border-blue-400'}`}
+              style={error ? { backgroundColor: '#7f1d1d', color: '#fee2e2' } : { backgroundColor: '#172554', color: '#dbeafe' }}
+            >
               {error || status}
             </div>
           )}

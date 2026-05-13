@@ -200,10 +200,6 @@ const App: React.FC = () => {
 
       await scanInternal(currentRootHandle, 0);
 
-      if (discovered.length === 0) {
-        throw new Error("No .scormproj files found in the selected folder.");
-      }
-
       setRootEnvironment({ rootHandle: currentRootHandle, isSandbox });
       setAvailableProjects(discovered);
       setRestorePointCount(discoveredRestorePoints);
@@ -213,7 +209,7 @@ const App: React.FC = () => {
       } else {
           setContext(null); // Clear context if any
           setView('project-select');
-          setError(null);
+          setError(discovered.length === 0 ? 'No existing .scormproj files were found. You can create a new course in this folder.' : null);
       }
   };
 
@@ -355,7 +351,7 @@ const App: React.FC = () => {
       let rootHandle = context && !context.isSandbox ? context.rootHandle : null;
       rootHandle = rootHandle || (rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle : null);
       if (!rootHandle && request.mode === 'powerpoint') {
-        throw new Error('PowerPoint import needs an open working folder first. Click Open Project Folder, select your SCORM Projects folder, then create the PowerPoint course again.');
+        throw new Error('PowerPoint import needs an open project folder first. Click Open Project Folder, select a project folder, then create the PowerPoint course again.');
       }
       if (!rootHandle) {
         if (!('showDirectoryPicker' in window) || window.self !== window.top) {
@@ -1043,7 +1039,22 @@ const App: React.FC = () => {
         <div className="theme-dark min-h-screen bg-slate-50 flex flex-col items-center py-12 px-6">
             <div className="max-w-4xl w-full">
                 <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold text-slate-800">Select Project to Load</h1>
+                    <div>
+                        <h1 className="text-3xl font-bold text-slate-800">Select Project to Load</h1>
+                        {error && <p className="text-sm text-slate-400 mt-2">{error}</p>}
+                    </div>
+                    <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => {
+                            setNewCourseError(null);
+                            setNewCourseStatus(null);
+                            setIsNewCourseOpen(true);
+                        }}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold shadow"
+                    >
+                        <FilePlus2 className="w-4 h-4" />
+                        Create New Course
+                    </button>
                     <button 
                         onClick={() => {
                             setAvailableProjects([]);
@@ -1054,6 +1065,7 @@ const App: React.FC = () => {
                     >
                         Back to Folder Selection
                     </button>
+                    </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {availableProjects.map((p, i) => (
@@ -1100,6 +1112,11 @@ const App: React.FC = () => {
         onSave={handleSave}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onCloseProject={handleCloseProject}
+        onCreateNewCourse={() => {
+          setNewCourseError(null);
+          setNewCourseStatus(null);
+          setIsNewCourseOpen(true);
+        }}
       />
       
       <main className="flex-1 overflow-y-auto relative">

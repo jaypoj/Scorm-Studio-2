@@ -1,6 +1,6 @@
 import React from 'react';
 import { ViewState, ScormProject } from '../types';
-import { LayoutDashboard, BookOpen, Layers, CheckSquare, Settings, FileJson, Save, FolderOutput } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Layers, CheckSquare, Settings, FileJson, Save, FolderOutput, FilePlus2 } from 'lucide-react';
 
 interface SidebarProps {
   project: ScormProject;
@@ -9,9 +9,10 @@ interface SidebarProps {
   onSave: () => void;
   onOpenSettings: () => void;
   onCloseProject: () => void;
+  onCreateNewCourse: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse }) => {
   const isTopicActive = (id: string) => {
     return typeof currentView === 'object' && currentView.type === 'topic-edit' && currentView.id === id;
   };
@@ -113,6 +114,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
       </nav>
 
       <div className="p-4 border-t border-slate-800 space-y-2">
+        <button
+          onClick={onCreateNewCourse}
+          className="w-full flex justify-center items-center gap-2 bg-violet-700 hover:bg-violet-600 text-white px-4 py-2.5 rounded shadow-lg transition-all active:scale-95"
+        >
+          <FilePlus2 className="w-4 h-4" />
+          Create New Course
+        </button>
         <button
           onClick={onCloseProject}
           className="w-full flex justify-center items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded text-xs transition-colors mb-4"
