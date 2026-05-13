@@ -20,29 +20,36 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
   const [localValue, setLocalValue] = useState(value);
   const [isMediaSearchOpen, setIsMediaSearchOpen] = useState(false);
   const [savedRange, setSavedRange] = useState<Range | null>(null);
+  const lastExternalValueRef = useRef(value);
+  const lastEmittedValueRef = useRef(value);
 
   // Sync external changes to local state (e.g., when switching topics)
   useEffect(() => {
-     // If value is exactly localValue, it likely came from our own handleInput
-     // If they differ, we sync localValue and potentially update the DOM
-     if (value !== localValue) {
+     const isOwnEdit = value === lastEmittedValueRef.current;
+     if (isOwnEdit && !isSourceMode) return;
+
+     if (value !== lastExternalValueRef.current || isSourceMode) {
+        lastExternalValueRef.current = value;
+        lastEmittedValueRef.current = value;
         setLocalValue(value);
-        if (contentRef.current && !isSourceMode) {
-             // Browser-normalized HTML check:
-             // We compare the content directly. If common browsers change things like quotes or whitespace,
-             // we avoid a full re-render unless the actual semantic content is different.
-             if (contentRef.current.innerHTML !== value) {
-                 contentRef.current.innerHTML = value;
-             }
+        if (contentRef.current && !isSourceMode && contentRef.current.innerHTML !== value) {
+            contentRef.current.innerHTML = value;
         }
      }
   }, [value, isSourceMode]);
+
+  useEffect(() => {
+    if (contentRef.current && !isSourceMode && contentRef.current.innerHTML !== value) {
+      contentRef.current.innerHTML = value;
+    }
+  }, [isSourceMode]);
 
   const handleInput = () => {
     if (contentRef.current) {
       const html = contentRef.current.innerHTML;
       if (html !== localValue) {
         setLocalValue(html);
+        lastEmittedValueRef.current = html;
         onChange(html);
       }
     }
@@ -216,6 +223,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
                 value={localValue}
                 onChange={(e) => {
                     setLocalValue(e.target.value);
+                    lastEmittedValueRef.current = e.target.value;
                     onChange(e.target.value);
                 }}
                 className="w-full h-full p-4 font-mono text-sm resize-none focus:outline-none bg-slate-50 text-slate-800"
@@ -225,10 +233,10 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
              <div
                 ref={contentRef}
                 contentEditable
+                suppressContentEditableWarning
                 onInput={handleInput}
                 onPaste={handlePaste}
                 className="course-content-editor flex-1 w-full p-6 focus:outline-none overflow-y-auto [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-4 [&>h2]:text-2xl [&>h2]:font-bold [&>h2]:mb-3 [&>h3]:text-xl [&>h3]:font-bold [&>h3]:mb-2 [&>p]:mb-3 [&>ul]:list-disc [&>ul]:pl-5 [&>ol]:list-decimal [&>ol]:pl-5 text-slate-800"
-                dangerouslySetInnerHTML={{ __html: value }}
              />
          )}
       </div>

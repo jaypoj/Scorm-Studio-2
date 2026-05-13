@@ -76,7 +76,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
              }`}
            >
             <Layers className="w-4 h-4" />
-            All Topics
+            <span className="flex-1 text-left">All Topics</span>
+            <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-violet-500/20 text-violet-200 border border-violet-400/30">
+              Edit
+            </span>
            </button>
            
            <div className="pl-4 space-y-0.5 mt-1 border-l-2 border-slate-800 ml-3">

@@ -101,6 +101,11 @@ const buildScormApi = () => `window.SCORM={api:null,initialized:false,findAPI:fu
 
 const buildExportContentStyles = () => `.topic-text ul,.topic-text ol{margin:12px 0 16px;padding-left:28px}.topic-text ul{list-style:disc}.topic-text ol{list-style:decimal}.topic-text li{margin:6px 0;padding-left:3px}.topic-text li>ul,.topic-text li>ol{margin:6px 0 6px 8px}.topic-text table{table-layout:auto;margin:16px 0 20px}.topic-text th,.topic-text td{vertical-align:top}.topic-text th{color:#fff}.topic-text tr:nth-child(even) td{background:#272231}`;
 
+const buildThemeStyles = (theme: ScormProject['scormConfig']['outputTheme']) => {
+  if (theme !== 'legacy-green') return '';
+  return `body{background:#f4f5f7;color:#111827}.sidebar{background:#251f22;border-right-color:#3b3335;color:#e8e4df}.sidebar-header{border-bottom-color:#3b3335}.course-title{color:#e8e4df}.header h1,.page-header h2{color:#111827}.progress-fill{background:#8cc63f}.progress-text{color:#d8e7c8}.sidebar-nav{background:#251f22}.nav-item{color:#e8e4df;border-left:4px solid transparent;border-radius:8px}.nav-item:hover,.nav-item.active{background:#3b4328;color:#9bd34f;border-left-color:#8cc63f;box-shadow:none}.main-area{background:#f5f6f8;color:#111827}.header,.footer{background:#fff;border-color:#e5e7eb;color:#111827}.content-container{background:#f5f6f8}.page-card{background:#f5f6f8;border-color:#e5e7eb;box-shadow:none}.topic-text{color:#111827}.topic-text h2,.topic-text h3{color:#030712}.topic-text th{background:#eef5e2;color:#111827}.topic-text td,.topic-text th{border-color:#cfd8c2}.topic-text tr:nth-child(even) td{background:#fafcf6}.media-frame,.video-frame,.audio-dock,.knowledge-check,.assessment-card,.question{background:#fff;border-color:#e5e7eb;color:#111827;box-shadow:0 8px 24px -20px rgba(0,0,0,.35)}.audio-title{color:#111827}.synced-caption,.option{background:#f8fafc;border-color:#e5e7eb;color:#111827}.caption-toggle,.nav-button,.check-button{background:#8cc63f;color:#fff;border-color:#8cc63f}.caption-toggle:hover,.caption-toggle[aria-pressed="true"],.nav-button:hover,.check-button:hover{background:#76a933;color:#fff;box-shadow:0 14px 30px -22px rgba(80,120,28,.9)}.secondary{background:#f0f0f0;color:#111827}.gate-message,.muted{color:#4b5563}.feedback.correct,.assessment-result.pass{color:#76a933}.feedback.incorrect,.assessment-result.fail{color:#b91c1c}.scorm-alert{background:#fff;border-color:#8cc63f;color:#111827}`;
+};
+
 const buildNavigation = (pages: { id: string; title: string }[], passMark: number, scormConfig: ScormProject['scormConfig']) => `
 const PAGES=${JSON.stringify(pages)};
 const COURSE_SETTINGS=${JSON.stringify({
@@ -166,7 +171,7 @@ export class ScormPackager {
       captionMap.set(page.id, captionHref);
     }
 
-    zip.file('styles/main.css', buildStyles() + buildExportContentStyles());
+    zip.file('styles/main.css', buildStyles() + buildExportContentStyles() + buildThemeStyles(project.scormConfig.outputTheme || 'dark-violet'));
     zip.file('scripts/scorm-api.js', buildScormApi());
     zip.file('scripts/navigation.js', buildNavigation(pageEntries, project.courseContent.assessment.passMark || 80, project.scormConfig));
     zip.file('project.json', JSON.stringify(project, null, 2));
