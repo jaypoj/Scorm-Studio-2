@@ -10,7 +10,7 @@ import { ScormPackager } from './services/scormPackager';
 import { generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
 import { BinaryDecoder } from './services/binaryDecoder';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus } from './types';
-import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History } from 'lucide-react';
+import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 
@@ -498,7 +498,38 @@ const App: React.FC = () => {
              ...prev,
              courseContent: { ...prev.courseContent, topics: newTopics }
         };
+      });
+  };
+
+  const deleteTopicPage = (topicId: string) => {
+    if (!context) return;
+    const topic = context.projectData.courseContent.topics.find(t => t.id === topicId);
+    if (!topic) return;
+
+    const confirmed = window.confirm(`Delete the entire page "${topic.title}"?\n\nThis removes the topic page, its knowledge check, narration text, captions, and media links from the course. Media files already saved in the media folder will remain on disk.`);
+    if (!confirmed) return;
+
+    updateProjectData(prev => {
+      const remainingTopics = prev.courseContent.topics
+        .filter(t => t.id !== topicId)
+        .map((t, index) => ({ ...t, id: `topic-${index}` }));
+
+      return {
+        ...prev,
+        courseData: {
+          ...prev.courseData,
+          topics: remainingTopics.map(t => t.title),
+          customTopics: prev.courseData.customTopics ? remainingTopics.map(t => t.title) : null,
+        },
+        courseContent: {
+          ...prev.courseContent,
+          topics: remainingTopics,
+          lastModified: new Date().toISOString(),
+        }
+      };
     });
+
+    setView('topic-list');
   };
 
   const getEditablePages = (project: ScormProject) => [
@@ -758,16 +789,26 @@ const App: React.FC = () => {
                  </div>
                  <div className="space-y-2">
                      {projectData.courseContent.topics.map((t, i) => (
-                         <div key={t.id} className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center hover:shadow-sm transition-shadow">
-                             <span className="font-medium text-slate-700">{i + 1}. {t.title}</span>
-                             <button 
-                                onClick={() => setView({ type: 'topic-edit', id: t.id })}
-                                className="text-blue-600 text-sm hover:underline"
-                             >
-                                Edit
-                             </button>
-                         </div>
-                     ))}
+                          <div key={t.id} className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center hover:shadow-sm transition-shadow">
+                              <span className="font-medium text-slate-700">{i + 1}. {t.title}</span>
+                              <div className="flex items-center gap-2">
+                                  <button
+                                     onClick={() => setView({ type: 'topic-edit', id: t.id })}
+                                     className="text-blue-600 text-sm hover:underline"
+                                  >
+                                     Edit
+                                  </button>
+                                  <button
+                                     onClick={() => deleteTopicPage(t.id)}
+                                     className="inline-flex items-center gap-1 text-red-500 text-sm hover:text-red-700 hover:underline"
+                                     title="Delete entire topic page"
+                                  >
+                                     <Trash2 className="w-3.5 h-3.5" />
+                                     Delete
+                                  </button>
+                              </div>
+                          </div>
+                      ))}
                  </div>
             </div>
         )
