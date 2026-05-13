@@ -25,6 +25,7 @@ const App: React.FC = () => {
   const [isNewCourseOpen, setIsNewCourseOpen] = useState(false);
   const [isCreatingCourse, setIsCreatingCourse] = useState(false);
   const [newCourseError, setNewCourseError] = useState<string | null>(null);
+  const [newCourseStatus, setNewCourseStatus] = useState<string | null>(null);
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string | null>(null);
   const [restorePointCount, setRestorePointCount] = useState(0);
   const [pronunciationConfig, setPronunciationConfig] = useState<PronunciationConfig>({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
@@ -349,6 +350,7 @@ const App: React.FC = () => {
   const handleCreateNewCourse = async (request: NewCourseRequest) => {
     setIsCreatingCourse(true);
     setNewCourseError(null);
+    setNewCourseStatus('Preparing course workspace...');
     try {
       let rootHandle = context && !context.isSandbox ? context.rootHandle : null;
       rootHandle = rootHandle || (rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle : null);
@@ -364,6 +366,7 @@ const App: React.FC = () => {
         rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
       }
       const courseFolderName = sanitizeFileName(request.courseName);
+      setNewCourseStatus('Creating course folders...');
       const courseFolderHandle = await rootHandle.getDirectoryHandle(courseFolderName, { create: true });
       const assetsHandle = await courseFolderHandle.getDirectoryHandle('media', { create: true });
       await courseFolderHandle.getDirectoryHandle('_restore_points', { create: true });
@@ -372,6 +375,8 @@ const App: React.FC = () => {
       await writeTextFile(pronunciationHandle, JSON.stringify(initialPronunciationConfig, null, 2));
 
       const generationSettings = { ...aiSettings, model: request.model };
+      setNewCourseStatus(request.mode === 'powerpoint' ? 'Reading PowerPoint slides...' : request.mode === 'ai' ? 'Generating course with AI...' : 'Building starter course...');
+      await new Promise(resolve => setTimeout(resolve, 50));
       const importedPowerPoint = request.mode === 'powerpoint' && request.powerPointFile
         ? await importPowerPointCourse(request.powerPointFile, request.courseName)
         : null;
@@ -382,6 +387,7 @@ const App: React.FC = () => {
       const project = ScormManager.createProject(request.courseName, projectTopics, request.difficulty, generatedContent);
 
       if (importedPowerPoint) {
+        setNewCourseStatus(`Copying ${importedPowerPoint.mediaFiles.length} PowerPoint media file${importedPowerPoint.mediaFiles.length === 1 ? '' : 's'}...`);
         for (const media of importedPowerPoint.mediaFiles) {
           const fileHandle = await assetsHandle.getFileHandle(media.file.name, { create: true });
           const writable = await fileHandle.createWritable();
@@ -392,6 +398,7 @@ const App: React.FC = () => {
           console.warn('PowerPoint import warnings:', importedPowerPoint.warnings);
         }
       }
+      setNewCourseStatus('Saving project file...');
       const fileName = `${courseFolderName}.scormproj`;
       const projectHandle = await courseFolderHandle.getFileHandle(fileName, { create: true });
       await writeTextFile(projectHandle, JSON.stringify(project, null, 2));
@@ -412,12 +419,14 @@ const App: React.FC = () => {
       setView('welcome');
       setIsNewCourseOpen(false);
       setLastAutoSaveAt(new Date().toLocaleTimeString());
+      setNewCourseStatus(null);
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         setNewCourseError(err.message || 'Failed to create course.');
       }
     } finally {
       setIsCreatingCourse(false);
+      setNewCourseStatus(null);
     }
   };
 
@@ -1016,10 +1025,11 @@ const App: React.FC = () => {
             </p>
          </div>
          <NewCourseModal
-            isOpen={isNewCourseOpen}
-            isCreating={isCreatingCourse}
-            error={newCourseError}
-            aiSettings={aiSettings}
+             isOpen={isNewCourseOpen}
+             isCreating={isCreatingCourse}
+             error={newCourseError}
+             status={newCourseStatus}
+             aiSettings={aiSettings}
             onClose={() => setIsNewCourseOpen(false)}
             onCreate={handleCreateNewCourse}
          />
@@ -1157,6 +1167,7 @@ const App: React.FC = () => {
         isOpen={isNewCourseOpen}
         isCreating={isCreatingCourse}
         error={newCourseError}
+        status={newCourseStatus}
         aiSettings={aiSettings}
         onClose={() => setIsNewCourseOpen(false)}
         onCreate={handleCreateNewCourse}

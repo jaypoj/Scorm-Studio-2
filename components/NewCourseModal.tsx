@@ -18,6 +18,7 @@ interface NewCourseModalProps {
   isOpen: boolean;
   isCreating: boolean;
   error: string | null;
+  status: string | null;
   aiSettings: AISettings;
   onClose: () => void;
   onCreate: (request: NewCourseRequest) => Promise<void>;
@@ -34,7 +35,7 @@ const RATE_LIMIT_OPTIONS: { value: AiRateLimitLevel; label: string; helper: stri
 const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.json,.md,.html,.htm,.ppt,.pptx';
 const ACCEPTED_POWERPOINT_TYPES = '.ppt,.pptx';
 
-export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, aiSettings, onClose, onCreate }) => {
+export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, aiSettings, onClose, onCreate }) => {
   const [courseName, setCourseName] = useState('');
   const [difficulty, setDifficulty] = useState(3);
   const [topicText, setTopicText] = useState('');
@@ -51,7 +52,9 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
   if (!isOpen) return null;
 
   const topics = topicText.split('\n').map(topic => topic.trim().replace(/^[-*]\s*/, '')).filter(Boolean);
-  const canCreate = courseName.trim().length > 0 && (mode === 'manual' || mode === 'powerpoint' ? true : topics.length > 0) && (mode !== 'powerpoint' || Boolean(powerPointFile));
+  const canCreate = courseName.trim().length > 0
+    && (mode === 'manual' || mode === 'powerpoint' || topics.length > 0)
+    && (mode !== 'powerpoint' || Boolean(powerPointFile));
   const selectedRateLimit = RATE_LIMIT_OPTIONS.find(option => option.value === rateLimit) || RATE_LIMIT_OPTIONS[2];
   const addReferenceFiles = (files: FileList | File[]) => {
     const incoming = Array.from(files);
@@ -262,21 +265,22 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             />
           </div>
 
-          {error && (
-            <div className="p-3 bg-red-50 text-red-700 text-sm rounded border border-red-100">
-              {error}
+          {(status || error) && (
+            <div className={`p-3 text-sm rounded border ${error ? 'bg-red-50 text-red-700 border-red-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+              {error || status}
             </div>
           )}
         </div>
 
         <div className="p-5 border-t border-slate-200 bg-slate-50">
           <button
+            type="button"
             onClick={() => onCreate({ courseName: courseName.trim(), difficulty, topics, mode, model, rateLimit, referenceFiles, powerPointFile })}
             disabled={!canCreate || isCreating}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold flex items-center justify-center gap-2"
           >
             {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === 'ai' ? <Bot className="w-4 h-4" /> : mode === 'powerpoint' ? <Presentation className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
-            {isCreating ? 'Creating Course...' : 'Choose Folder & Create Course'}
+            {isCreating ? (status || 'Creating Course...') : mode === 'powerpoint' ? 'Import PowerPoint & Create Course' : 'Choose Folder & Create Course'}
           </button>
         </div>
       </div>
