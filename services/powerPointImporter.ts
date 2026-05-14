@@ -13,6 +13,8 @@ export interface ImportedPowerPointCourse {
   warnings: string[];
 }
 
+export type PowerPointImportProgress = (percent: number, message: string) => void;
+
 const slidePathPattern = /^ppt\/slides\/slide(\d+)\.xml$/;
 
 const getExtension = (value: string) => value.split('.').pop()?.toLowerCase() || 'bin';
@@ -34,6 +36,11 @@ const contentTypeForExtension = (extension: string) => {
     default: return 'application/octet-stream';
   }
 };
+
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
+const SUPPORTED_AUDIO_EXTENSIONS = new Set(['mp3', 'm4a', 'wav']);
+const SUPPORTED_VIDEO_EXTENSIONS = new Set(['mp4', 'webm']);
+const MIN_SLIDE_IMAGE_BYTES = 10 * 1024;
 
 const stripXml = (value: string) => value
   .replace(/<[^>]+>/g, ' ')
@@ -154,7 +161,8 @@ const extractSlideMedia = async (zip: JSZip, slideXml: string, slidePath: string
   const mediaFiles: ImportedPowerPointMedia[] = [];
   let caption = '';
   const relationships = await parseRelationships(zip, getSlideRelsPath(slidePath));
-  const relIds = Array.from(new Set(Array.from(slideXml.matchAll(/r:(?:embed|link)="([^"]+)"/g)).map(match => match[1])));
+  const relIds = extractSlideMediaRelIds(slideXml);
+  const seenTargets = new Set<string>();
 
   let imageCount = 0;
   let audioCount = 0;
@@ -164,12 +172,14 @@ const extractSlideMedia = async (zip: JSZip, slideXml: string, slidePath: string
     const rel = relationships.get(relId);
     if (!rel) continue;
     const targetPath = resolveTargetPath(slidePath, rel.target);
+    if (seenTargets.has(targetPath) || !targetPath.startsWith('ppt/media/')) continue;
+    seenTargets.add(targetPath);
     const zipFile = zip.file(targetPath);
     if (!zipFile) continue;
     const extension = getExtension(targetPath);
-    const isImage = rel.type.includes('/image') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(extension);
-    const isAudio = rel.type.includes('/audio') || ['mp3', 'm4a', 'wav'].includes(extension);
-    const isVideo = rel.type.includes('/video') || ['mp4', 'webm'].includes(extension);
+    const isImage = SUPPORTED_IMAGE_EXTENSIONS.has(extension) && (rel.type.includes('/image') || SUPPORTED_IMAGE_EXTENSIONS.has(extension));
+    const isAudio = SUPPORTED_AUDIO_EXTENSIONS.has(extension) && (rel.type.includes('/audio') || SUPPORTED_AUDIO_EXTENSIONS.has(extension));
+    const isVideo = SUPPORTED_VIDEO_EXTENSIONS.has(extension) && (rel.type.includes('/video') || SUPPORTED_VIDEO_EXTENSIONS.has(extension));
     const isCaption = extension === 'vtt';
     if (isCaption) {
       caption = await zipFile.async('string');
@@ -177,11 +187,13 @@ const extractSlideMedia = async (zip: JSZip, slideXml: string, slidePath: string
     }
     if (!isImage && !isAudio && !isVideo) continue;
 
+    const blob = await zipFile.async('blob');
+    if (isImage && blob.size < MIN_SLIDE_IMAGE_BYTES) continue;
+
     const count = isImage ? imageCount++ : isAudio ? audioCount++ : videoCount++;
     const kind = isImage ? 'image' : isAudio ? 'audio' : 'video';
     const storageId = `slide-${slideIndex + 1}-${kind}-${count + 1}`;
     const fileName = `${storageId}.${extension}`;
-    const blob = await zipFile.async('blob');
     const file = new File([blob], fileName, { type: contentTypeForExtension(extension) });
 
     mediaFiles.push({ file, storageId });
@@ -190,6 +202,8 @@ const extractSlideMedia = async (zip: JSZip, slideXml: string, slidePath: string
       storageId,
       type: kind,
       title: `Slide ${slideIndex + 1} ${kind}`,
+      candidate: kind !== 'audio',
+      source: 'powerpoint',
     });
   }
 
@@ -211,11 +225,24 @@ const extractNotes = async (zip: JSZip, slidePath: string) => {
     .trim();
 };
 
-export async function importPowerPointCourse(file: File, courseTitle: string): Promise<ImportedPowerPointCourse> {
+const extractSlideMediaRelIds = (slideXml: string) => {
+  const relIds: string[] = [];
+  const add = (value?: string) => {
+    if (value && !relIds.includes(value)) relIds.push(value);
+  };
+
+  for (const match of slideXml.matchAll(/<a:blip\b[^>]*r:embed="([^"]+)"/g)) add(match[1]);
+  for (const match of slideXml.matchAll(/<a:(?:audioFile|videoFile)\b[^>]*r:(?:embed|link)="([^"]+)"/g)) add(match[1]);
+  for (const match of slideXml.matchAll(/<p14:media\b[^>]*r:(?:embed|link)="([^"]+)"/g)) add(match[1]);
+  return relIds;
+};
+
+export async function importPowerPointCourse(file: File, courseTitle: string, onProgress?: PowerPointImportProgress): Promise<ImportedPowerPointCourse> {
   if (file.name.toLowerCase().endsWith('.ppt') && !file.name.toLowerCase().endsWith('.pptx')) {
     throw new Error('Legacy .ppt files are not supported yet. Please save/export the file as .pptx and import again.');
   }
 
+  onProgress?.(5, 'Opening PowerPoint package...');
   const zip = await JSZip.loadAsync(file);
   const slidePaths = Object.keys(zip.files)
     .filter(path => slidePathPattern.test(path))
@@ -223,6 +250,7 @@ export async function importPowerPointCourse(file: File, courseTitle: string): P
 
   if (!slidePaths.length) throw new Error('No PowerPoint slides were found in this .pptx file.');
 
+  onProgress?.(12, `Found ${slidePaths.length} slide${slidePaths.length === 1 ? '' : 's'}...`);
   const mediaFiles: ImportedPowerPointMedia[] = [];
   const warnings: string[] = [];
   const topics: Topic[] = [];
@@ -244,6 +272,7 @@ export async function importPowerPointCourse(file: File, courseTitle: string): P
       id: `topic-${index}`,
       title,
       content,
+      notes,
       narration: notes || bodyParagraphs.map(paragraph => paragraph.text).join(' ').slice(0, 900) || `Review the key information from ${title}.`,
       duration: 3,
       imageKeywords: [title],
@@ -265,8 +294,10 @@ export async function importPowerPointCourse(file: File, courseTitle: string): P
         }],
       },
     });
+    onProgress?.(12 + Math.round(((index + 1) / slidePaths.length) * 72), `Imported slide ${index + 1} of ${slidePaths.length}...`);
   }
 
+  onProgress?.(90, 'Finalizing imported course pages...');
   if (!mediaFiles.length) warnings.push('No embedded slide media was found. Slide text was still imported.');
 
   const firstTopic = topics[0]?.title || courseTitle;

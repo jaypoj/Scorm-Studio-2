@@ -47,7 +47,7 @@ const renderAssessment = (project: ScormProject) => {
 };
 
 const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>) => {
-  const visual = (page.media || []).filter(media => ['image', 'video'].includes(getMediaKind(media)));
+  const visual = (page.media || []).filter(media => !media.candidate && ['image', 'video'].includes(getMediaKind(media)));
   const audio = (page.media || []).find(media => getMediaKind(media) === 'audio');
   const visualHtml = visual.map(media => {
     const kind = getMediaKind(media);
@@ -141,7 +141,10 @@ export class ScormPackager {
   static async createScormPackage(project: ScormProject, assetsHandle: FileSystemDirectoryHandle | null): Promise<Blob> {
     const zip = new JSZip();
     const title = project.courseData.title || project.project.name;
-    const pages: Page[] = [project.courseContent.welcomePage, project.courseContent.learningObjectivesPage, ...project.courseContent.topics];
+    const isPowerPointImport = project.scormConfig?.contentMode === 'ppt-import';
+    const pages: Page[] = isPowerPointImport
+      ? [...project.courseContent.topics]
+      : [project.courseContent.welcomePage, project.courseContent.learningObjectivesPage, ...project.courseContent.topics];
     const pageEntries = [...pages.map(page => ({ id: safeId(page.id), title: page.title })), { id: 'assessment', title: 'Assessment' }];
     const assetMap = new Map<string, string>();
     const captionMap = new Map<string, string>();
@@ -181,7 +184,7 @@ export class ScormPackager {
     }
     zip.file('pages/assessment.html', renderAssessment(project));
 
-    zip.file('index.html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="styles/main.css"><script src="scripts/scorm-api.js"></script></head><body><nav class="sidebar"><div class="sidebar-header"><div class="course-title">${escapeHtml(title)}</div><div class="progress-wrap"><div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div><div id="progress-text" class="progress-text">0% complete</div></div></div><div class="sidebar-nav">${pageEntries.map((page, index) => `<a href="#" class="nav-item" data-index="${index}">${escapeHtml(index > 1 && page.id !== 'assessment' ? `${index - 1}. ${page.title}` : page.title)}</a>`).join('')}</div></nav><main class="main-area"><header class="header"><h1>${escapeHtml(title)}</h1></header><div id="content-container" class="content-container"></div><footer class="footer"><button id="prev-button" class="nav-button secondary" type="button">Previous</button><div id="gate-message" class="muted gate-message"></div><button id="next-button" class="nav-button primary" type="button">Next</button></footer></main><script src="scripts/navigation.js"></script></body></html>`);
+    zip.file('index.html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="styles/main.css"><script src="scripts/scorm-api.js"></script></head><body><nav class="sidebar"><div class="sidebar-header"><div class="course-title">${escapeHtml(title)}</div><div class="progress-wrap"><div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div><div id="progress-text" class="progress-text">0% complete</div></div></div><div class="sidebar-nav">${pageEntries.map((page, index) => `<a href="#" class="nav-item" data-index="${index}">${escapeHtml(page.id !== 'assessment' && (isPowerPointImport || index > 1) ? `${isPowerPointImport ? index + 1 : index - 1}. ${page.title}` : page.title)}</a>`).join('')}</div></nav><main class="main-area"><header class="header"><h1>${escapeHtml(title)}</h1></header><div id="content-container" class="content-container"></div><footer class="footer"><button id="prev-button" class="nav-button secondary" type="button">Previous</button><div id="gate-message" class="muted gate-message"></div><button id="next-button" class="nav-button primary" type="button">Next</button></footer></main><script src="scripts/navigation.js"></script></body></html>`);
 
     const fileList = [
       'index.html',

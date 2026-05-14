@@ -19,6 +19,7 @@ interface NewCourseModalProps {
   isCreating: boolean;
   error: string | null;
   status: string | null;
+  progress?: number | null;
   aiSettings: AISettings;
   allowPowerPointImport?: boolean;
   onClose: () => void;
@@ -36,7 +37,7 @@ const RATE_LIMIT_OPTIONS: { value: AiRateLimitLevel; label: string; helper: stri
 const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.json,.md,.html,.htm,.ppt,.pptx';
 const ACCEPTED_POWERPOINT_TYPES = '.ppt,.pptx';
 
-export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, aiSettings, allowPowerPointImport = false, onClose, onCreate }) => {
+export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, progress = null, aiSettings, allowPowerPointImport = false, onClose, onCreate }) => {
   const [courseName, setCourseName] = useState('');
   const [difficulty, setDifficulty] = useState(3);
   const [topicText, setTopicText] = useState('');
@@ -276,11 +277,19 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
           </div>
 
           {(status || error) && (
-            <div
-              className={`p-3 text-sm rounded border ${error ? 'border-red-400' : 'border-blue-400'}`}
-              style={error ? { backgroundColor: '#7f1d1d', color: '#fee2e2' } : { backgroundColor: '#172554', color: '#dbeafe' }}
-            >
-              {error || status}
+            <div className={`p-3 text-sm rounded border ${error ? 'border-red-400 bg-red-950 text-red-100' : 'border-violet-500 bg-slate-950 text-violet-100'}`}>
+              <div className="flex items-center justify-between gap-3">
+                <span>{error || status}</span>
+                {typeof progress === 'number' && !error && <span className="font-bold text-white">{Math.max(0, Math.min(100, progress))}%</span>}
+              </div>
+              {typeof progress === 'number' && !error && (
+                <div className="mt-2 h-2 rounded-full bg-white/15 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-400 transition-all duration-300"
+                    style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

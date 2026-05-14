@@ -98,6 +98,7 @@ export class ScormManager {
         requireKnowledgeCheckBeforeContinue: false,
         requireAudioCompletionBeforeContinue: false,
         outputTheme: 'dark-violet',
+        contentMode: 'standard',
       },
     });
   }
@@ -149,6 +150,7 @@ export class ScormManager {
         requireKnowledgeCheckBeforeContinue: Boolean(project.scormConfig?.requireKnowledgeCheckBeforeContinue),
         requireAudioCompletionBeforeContinue: Boolean(project.scormConfig?.requireAudioCompletionBeforeContinue),
         outputTheme: project.scormConfig?.outputTheme || 'dark-violet',
+        contentMode: project.scormConfig?.contentMode || 'standard',
       },
     };
 

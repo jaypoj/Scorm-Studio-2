@@ -286,8 +286,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   // Combine Props Data + Smart Discovery Data
   const allMedia = [...(data.media || []), ...discoveredMedia];
-  const visualMedia = allMedia.filter(m => ['image', 'video'].includes(getMediaType(m)));
+  const visualMedia = allMedia.filter(m => !m.candidate && ['image', 'video'].includes(getMediaType(m)));
   const featuredAudio = allMedia.find(m => getMediaType(m) === 'audio');
+  const hasPowerPointNotes = 'notes' in data && typeof (data as Topic).notes === 'string';
 
   const extractGoogleImageQueries = () => {
     const stripHtml = (value: string) => value.replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ');
@@ -1038,6 +1039,32 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                 />
             </div>
 
+            {hasPowerPointNotes && (
+              <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center justify-between">
+                  <span>PowerPoint Notes</span>
+                  <button
+                    type="button"
+                    onClick={() => onChange({ ...data, narration: (data as Topic).notes || data.narration })}
+                    disabled={!(data as Topic).notes?.trim()}
+                    className="text-[10px] bg-violet-600 text-white px-2 py-1 rounded font-semibold hover:bg-violet-700 disabled:opacity-50"
+                  >
+                    Use as Narration
+                  </button>
+                </h3>
+                <textarea
+                  value={(data as Topic).notes || ''}
+                  onChange={(e) => onChange({ ...data, notes: e.target.value } as Topic)}
+                  rows={4}
+                  className="w-full p-3 bg-white text-slate-900 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-violet-500 focus:outline-none"
+                  placeholder="Speaker notes imported from PowerPoint..."
+                />
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Imported slide notes stay with this page. Use them as narration when the old deck used notes for voiceover text.
+                </p>
+              </div>
+            )}
+
             <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
                 <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center justify-between">
                     <span>Narration Script</span>
@@ -1403,9 +1430,10 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                         const isAudio = type === 'audio';
                         const isVideo = type === 'video';
                         const isDiscovered = discoveredMedia.some(dm => dm.id === m.id);
+                        const isCandidate = Boolean(m.candidate);
 
                         return (
-                            <div key={m.id} className={`flex flex-col gap-2 p-3 rounded border hover:border-blue-200 transition-colors relative ${isDiscovered ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
+                            <div key={m.id} className={`flex flex-col gap-2 p-3 rounded border hover:border-blue-200 transition-colors relative ${isDiscovered ? 'bg-amber-50 border-amber-200' : isCandidate ? 'bg-violet-50 border-violet-200' : 'bg-slate-50 border-slate-100'}`}>
                                 <div className="flex items-start gap-3">
                                     <div className="w-20 h-20 bg-slate-200 rounded flex items-center justify-center shrink-0 overflow-hidden border border-slate-300 relative group">
                                     {isImage && previews[m.id] ? (
@@ -1428,8 +1456,22 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                         <div className="flex items-center gap-2">
                                             <p className="text-sm font-medium text-slate-700 truncate" title={m.title}>{m.title || m.storageId}</p>
                                             {isDiscovered && <span className="text-[9px] bg-amber-200 text-amber-800 px-1 rounded">New</span>}
+                                            {isCandidate && <span className="text-[9px] bg-violet-200 text-violet-800 px-1 rounded">PPT Candidate</span>}
                                         </div>
                                         <p className="text-[10px] text-slate-500 truncate mb-1">ID: {m.storageId}</p>
+                                        {isCandidate && ['image', 'video'].includes(type) && (
+                                          <button
+                                            type="button"
+                                            onClick={() => onChange({
+                                              ...data,
+                                              media: (data.media || []).map(item => item.id === m.id ? { ...item, candidate: false } : item)
+                                            })}
+                                            className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700"
+                                          >
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            Add to Page
+                                          </button>
+                                        )}
                                     </div>
                                     <button 
                                         onClick={() => handleDeleteMedia(m.id, m.storageId)}

@@ -26,6 +26,7 @@ const App: React.FC = () => {
   const [isCreatingCourse, setIsCreatingCourse] = useState(false);
   const [newCourseError, setNewCourseError] = useState<string | null>(null);
   const [newCourseStatus, setNewCourseStatus] = useState<string | null>(null);
+  const [newCourseProgress, setNewCourseProgress] = useState<number | null>(null);
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string | null>(null);
   const [restorePointCount, setRestorePointCount] = useState(0);
   const [pronunciationConfig, setPronunciationConfig] = useState<PronunciationConfig>({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
@@ -222,7 +223,9 @@ const App: React.FC = () => {
           isSandbox: sandbox
       });
       loadPronunciationConfig(rootH, sandbox);
-      setView('welcome');
+      setView(isPowerPointProject(proj.projectData) && proj.projectData.courseContent.topics[0]
+        ? { type: 'topic-edit', id: proj.projectData.courseContent.topics[0].id }
+        : 'welcome');
       setError(null);
   };
 
@@ -347,6 +350,7 @@ const App: React.FC = () => {
     setIsCreatingCourse(true);
     setNewCourseError(null);
     setNewCourseStatus('Preparing course workspace...');
+    setNewCourseProgress(request.mode === 'powerpoint' ? 2 : null);
     try {
       let rootHandle = context && !context.isSandbox ? context.rootHandle : null;
       rootHandle = rootHandle || (rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle : null);
@@ -374,16 +378,23 @@ const App: React.FC = () => {
       setNewCourseStatus(request.mode === 'powerpoint' ? 'Reading PowerPoint slides...' : request.mode === 'ai' ? 'Generating course with AI...' : 'Building starter course...');
       await new Promise(resolve => setTimeout(resolve, 50));
       const importedPowerPoint = request.mode === 'powerpoint' && request.powerPointFile
-        ? await importPowerPointCourse(request.powerPointFile, request.courseName)
+        ? await importPowerPointCourse(request.powerPointFile, request.courseName, (percent, message) => {
+            setNewCourseProgress(percent);
+            setNewCourseStatus(message);
+          })
         : null;
       const generatedContent = request.mode === 'ai'
         ? await generateCourseContent(generationSettings, request.courseName, request.topics, request.difficulty, request.referenceFiles, request.rateLimit)
         : importedPowerPoint?.courseContent;
       const projectTopics = importedPowerPoint?.topics || request.topics;
       const project = ScormManager.createProject(request.courseName, projectTopics, request.difficulty, generatedContent);
+      if (importedPowerPoint) {
+        project.scormConfig.contentMode = 'ppt-import';
+      }
 
       if (importedPowerPoint) {
         setNewCourseStatus(`Copying ${importedPowerPoint.mediaFiles.length} PowerPoint media file${importedPowerPoint.mediaFiles.length === 1 ? '' : 's'}...`);
+        setNewCourseProgress(92);
         for (const media of importedPowerPoint.mediaFiles) {
           const fileHandle = await assetsHandle.getFileHandle(media.file.name, { create: true });
           const writable = await fileHandle.createWritable();
@@ -395,6 +406,7 @@ const App: React.FC = () => {
         }
       }
       setNewCourseStatus('Saving project file...');
+      if (importedPowerPoint) setNewCourseProgress(97);
       const fileName = `${courseFolderName}.scormproj`;
       const projectHandle = await courseFolderHandle.getFileHandle(fileName, { create: true });
       await writeTextFile(projectHandle, JSON.stringify(project, null, 2));
@@ -412,7 +424,7 @@ const App: React.FC = () => {
       setContext(nextContext);
       setPronunciationConfig(initialPronunciationConfig);
       setScanResult(null);
-      setView('welcome');
+      setView(importedPowerPoint && project.courseContent.topics[0] ? { type: 'topic-edit', id: project.courseContent.topics[0].id } : 'welcome');
       setIsNewCourseOpen(false);
       setLastAutoSaveAt(new Date().toLocaleTimeString());
       setNewCourseStatus(null);
@@ -423,6 +435,7 @@ const App: React.FC = () => {
     } finally {
       setIsCreatingCourse(false);
       setNewCourseStatus(null);
+      setNewCourseProgress(null);
     }
   };
 
@@ -540,8 +553,7 @@ const App: React.FC = () => {
 
     updateProjectData(prev => {
       const remainingTopics = prev.courseContent.topics
-        .filter(t => t.id !== topicId)
-        .map((t, index) => ({ ...t, id: `topic-${index}` }));
+        .filter(t => t.id !== topicId);
 
       return {
         ...prev,
@@ -561,11 +573,15 @@ const App: React.FC = () => {
     setView('topic-list');
   };
 
-  const getEditablePages = (project: ScormProject) => [
-    project.courseContent.welcomePage,
-    project.courseContent.learningObjectivesPage,
-    ...project.courseContent.topics,
-  ];
+  const isPowerPointProject = (project: ScormProject) => project.scormConfig?.contentMode === 'ppt-import';
+
+  const getEditablePages = (project: ScormProject) => isPowerPointProject(project)
+    ? [...project.courseContent.topics]
+    : [
+        project.courseContent.welcomePage,
+        project.courseContent.learningObjectivesPage,
+        ...project.courseContent.topics,
+      ];
 
   const buildBatchProgress = (pages: Array<Topic | WelcomePage | LearningObjectivesPage>): BatchProgressItem[] => pages.map(page => ({
     pageId: page.id,
@@ -1025,6 +1041,7 @@ const App: React.FC = () => {
              isCreating={isCreatingCourse}
              error={newCourseError}
              status={newCourseStatus}
+             progress={newCourseProgress}
              aiSettings={aiSettings}
              allowPowerPointImport={Boolean(rootEnvironment && !rootEnvironment.isSandbox)}
              onClose={() => setIsNewCourseOpen(false)}
@@ -1049,6 +1066,7 @@ const App: React.FC = () => {
                         onClick={() => {
                             setNewCourseError(null);
                             setNewCourseStatus(null);
+                            setNewCourseProgress(null);
                             setIsNewCourseOpen(true);
                         }}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-700 hover:bg-violet-600 text-white text-sm font-semibold shadow"
@@ -1104,6 +1122,7 @@ const App: React.FC = () => {
                     isCreating={isCreatingCourse}
                     error={newCourseError}
                     status={newCourseStatus}
+                    progress={newCourseProgress}
                     aiSettings={aiSettings}
                     allowPowerPointImport={Boolean(rootEnvironment && !rootEnvironment.isSandbox)}
                     onClose={() => setIsNewCourseOpen(false)}
@@ -1126,8 +1145,10 @@ const App: React.FC = () => {
         onCreateNewCourse={() => {
           setNewCourseError(null);
           setNewCourseStatus(null);
+          setNewCourseProgress(null);
           setIsNewCourseOpen(true);
         }}
+        hideTemplatePages={isPowerPointProject(context.projectData)}
       />
       
       <main className="flex-1 overflow-y-auto relative">
@@ -1196,6 +1217,7 @@ const App: React.FC = () => {
         isCreating={isCreatingCourse}
         error={newCourseError}
         status={newCourseStatus}
+        progress={newCourseProgress}
         aiSettings={aiSettings}
         allowPowerPointImport={Boolean(context && !context.isSandbox)}
         onClose={() => setIsNewCourseOpen(false)}

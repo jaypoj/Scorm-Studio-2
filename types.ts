@@ -5,6 +5,8 @@ export interface MediaItem {
   title?: string;
   url?: string; // Blob URL for preview
   content?: string; // For captions
+  candidate?: boolean; // Imported but not yet placed on the visible page
+  source?: 'powerpoint' | 'upload' | 'generated' | 'search' | string;
 }
 
 export interface Question {
@@ -33,6 +35,7 @@ export interface Topic {
   duration: number;
   imageKeywords: string[];
   imagePrompts: string[];
+  notes?: string; // Imported PowerPoint speaker notes or page-level working notes
   caption?: string; // WebVTT
   videoSearchTerms?: string[];
   media?: MediaItem[];
@@ -118,6 +121,7 @@ export interface ScormProject {
     requireKnowledgeCheckBeforeContinue: boolean;
     requireAudioCompletionBeforeContinue: boolean;
     outputTheme: 'dark-violet' | 'legacy-green';
+    contentMode?: 'standard' | 'ppt-import';
   };
 }
 

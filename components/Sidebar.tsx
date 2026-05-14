@@ -10,9 +10,10 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onCloseProject: () => void;
   onCreateNewCourse: () => void;
+  hideTemplatePages?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse, hideTemplatePages = false }) => {
   const isTopicActive = (id: string) => {
     return typeof currentView === 'object' && currentView.type === 'topic-edit' && currentView.id === id;
   };
@@ -44,25 +45,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
           Course Structure
         </div>
 
-        <button
-          onClick={() => onNavigate('welcome')}
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-            currentView === 'welcome' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'
-          }`}
-        >
-          <LayoutDashboard className="w-4 h-4" />
-          Welcome Page
-        </button>
+        {!hideTemplatePages && (
+          <button
+            onClick={() => onNavigate('welcome')}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              currentView === 'welcome' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4" />
+            Welcome Page
+          </button>
+        )}
 
-        <button
-          onClick={() => onNavigate('objectives')}
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-            currentView === 'objectives' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          Learning Objectives
-        </button>
+        {!hideTemplatePages && (
+          <button
+            onClick={() => onNavigate('objectives')}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+              currentView === 'objectives' ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            Learning Objectives
+          </button>
+        )}
 
         <div className="pt-4 pb-1 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider flex justify-between items-center">
           <span>Topics</span>
