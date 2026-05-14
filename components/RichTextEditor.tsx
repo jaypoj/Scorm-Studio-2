@@ -20,6 +20,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
   const [localValue, setLocalValue] = useState(value);
   const [isMediaSearchOpen, setIsMediaSearchOpen] = useState(false);
   const [savedRange, setSavedRange] = useState<Range | null>(null);
+  const [isTableActive, setIsTableActive] = useState(false);
   const lastExternalValueRef = useRef(value);
   const lastEmittedValueRef = useRef(value);
 
@@ -59,6 +60,105 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
     document.execCommand(command, false, cmdValue);
     if(contentRef.current) contentRef.current.focus();
     handleInput();
+  };
+
+  const findSelectedTableCell = () => {
+    if (!contentRef.current) return null;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    let node: Node | null = selection.anchorNode;
+    if (!node) return null;
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
+    if (!(node instanceof Element)) return null;
+    const cell = node.closest('td, th');
+    return cell && contentRef.current.contains(cell) ? cell as HTMLTableCellElement : null;
+  };
+
+  const refreshTableState = () => {
+    setIsTableActive(Boolean(findSelectedTableCell()));
+  };
+
+  const emitDomChange = () => {
+    if (!contentRef.current) return;
+    const html = contentRef.current.innerHTML;
+    setLocalValue(html);
+    lastEmittedValueRef.current = html;
+    onChange(html);
+    refreshTableState();
+  };
+
+  const getTableContext = () => {
+    const cell = findSelectedTableCell();
+    const row = cell?.closest('tr') as HTMLTableRowElement | null;
+    const table = cell?.closest('table') as HTMLTableElement | null;
+    if (!cell || !row || !table) return null;
+    return {
+      cell,
+      row,
+      table,
+      cellIndex: Array.from(row.children).indexOf(cell),
+      columnCount: Math.max(...Array.from(table.rows).map(tableRow => tableRow.cells.length), 1),
+    };
+  };
+
+  const createCellLike = (source?: Element) => {
+    const tagName = source?.tagName.toLowerCase() === 'th' ? 'th' : 'td';
+    const cell = document.createElement(tagName);
+    cell.innerHTML = 'Detail';
+    return cell;
+  };
+
+  const addTableRow = () => {
+    const context = getTableContext();
+    if (!context) return;
+    const row = document.createElement('tr');
+    const sourceCells = Array.from(context.row.children);
+    const count = Math.max(sourceCells.length, context.columnCount);
+    for (let index = 0; index < count; index += 1) {
+      row.appendChild(createCellLike(sourceCells[index]));
+    }
+    context.row.parentElement?.insertBefore(row, context.row.nextSibling);
+    emitDomChange();
+  };
+
+  const addTableColumn = () => {
+    const context = getTableContext();
+    if (!context) return;
+    Array.from(context.table.rows).forEach(row => {
+      const referenceCell = row.cells[Math.min(context.cellIndex, row.cells.length - 1)];
+      const newCell = createCellLike(referenceCell);
+      row.insertBefore(newCell, row.cells[context.cellIndex + 1] || null);
+    });
+    emitDomChange();
+  };
+
+  const deleteTableRow = () => {
+    const context = getTableContext();
+    if (!context) return;
+    if (context.table.rows.length <= 1) {
+      context.table.remove();
+    } else {
+      context.row.remove();
+    }
+    emitDomChange();
+  };
+
+  const deleteTableColumn = () => {
+    const context = getTableContext();
+    if (!context) return;
+    Array.from(context.table.rows).forEach(row => {
+      const cell = row.cells[context.cellIndex];
+      if (cell) cell.remove();
+    });
+    if (Array.from(context.table.rows).every(row => row.cells.length === 0)) {
+      context.table.remove();
+    }
+    emitDomChange();
+  };
+
+  const handleTableButtonMouseDown = (event: React.MouseEvent<HTMLButtonElement>, action: () => void) => {
+    event.preventDefault();
+    action();
   };
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -187,6 +287,38 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
                     <button onClick={insertTable} className="p-1.5 hover:bg-slate-200 rounded text-slate-600" title="Insert Table">
                         <Table2 className="w-4 h-4" />
                     </button>
+                    {isTableActive && (
+                      <div className="flex items-center gap-1 ml-1 pl-2 border-l border-slate-300">
+                        <button
+                          onMouseDown={(event) => handleTableButtonMouseDown(event, addTableRow)}
+                          className="px-2 py-1 text-[11px] font-semibold rounded bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
+                          title="Add row below the selected table row"
+                        >
+                          + Row
+                        </button>
+                        <button
+                          onMouseDown={(event) => handleTableButtonMouseDown(event, addTableColumn)}
+                          className="px-2 py-1 text-[11px] font-semibold rounded bg-white border border-slate-300 text-slate-700 hover:bg-slate-100"
+                          title="Add column to the right of the selected table column"
+                        >
+                          + Col
+                        </button>
+                        <button
+                          onMouseDown={(event) => handleTableButtonMouseDown(event, deleteTableRow)}
+                          className="px-2 py-1 text-[11px] font-semibold rounded bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                          title="Delete selected table row"
+                        >
+                          Delete Row
+                        </button>
+                        <button
+                          onMouseDown={(event) => handleTableButtonMouseDown(event, deleteTableColumn)}
+                          className="px-2 py-1 text-[11px] font-semibold rounded bg-red-50 border border-red-200 text-red-700 hover:bg-red-100"
+                          title="Delete selected table column"
+                        >
+                          Delete Col
+                        </button>
+                      </div>
+                    )}
                     <div className="w-px h-4 bg-slate-300 mx-1"></div>
                     <button 
                         onClick={() => {
@@ -235,8 +367,11 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
                 contentEditable
                 suppressContentEditableWarning
                 onInput={handleInput}
+                onMouseUp={refreshTableState}
+                onKeyUp={refreshTableState}
+                onFocus={refreshTableState}
                 onPaste={handlePaste}
-                className="course-content-editor flex-1 w-full p-6 focus:outline-none overflow-y-auto [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-4 [&>h2]:text-2xl [&>h2]:font-bold [&>h2]:mb-3 [&>h3]:text-xl [&>h3]:font-bold [&>h3]:mb-2 [&>p]:mb-3 [&>ul]:list-disc [&>ul]:pl-5 [&>ol]:list-decimal [&>ol]:pl-5 text-slate-800"
+                className="course-content-editor flex-1 w-full p-6 focus:outline-none overflow-y-auto [&>h1]:text-3xl [&>h1]:font-bold [&>h1]:mb-4 [&>h2]:text-2xl [&>h2]:font-bold [&>h2]:mb-3 [&>h3]:text-xl [&>h3]:font-bold [&>h3]:mb-2 [&>p]:mb-3 [&>ul]:list-disc [&>ul]:pl-5 [&>ol]:list-decimal [&>ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_table]:my-4 [&_th]:border [&_th]:border-slate-300 [&_td]:border [&_td]:border-slate-300 [&_th]:bg-slate-100 [&_th]:p-2 [&_td]:p-2 [&_th]:text-left [&_td]:align-top text-slate-800"
              />
          )}
       </div>
