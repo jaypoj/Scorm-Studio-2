@@ -170,7 +170,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                      storageId: storageId,
                                      type: inferredType as any,
                                      title: meta.title || meta.originalName || meta.original_name || storageId,
-                                     url: ''
+                                     url: '',
+                                     candidate: Boolean(meta.candidate),
+                                     source: meta.source
                                  });
                              }
                          }
@@ -286,8 +288,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   // Combine Props Data + Smart Discovery Data
   const allMedia = [...(data.media || []), ...discoveredMedia];
+  const isNarrationAudio = (media: MediaItem) => getMediaType(media) === 'audio' && !media.candidate && media.source !== 'powerpoint';
   const visualMedia = allMedia.filter(m => !m.candidate && ['image', 'video'].includes(getMediaType(m)));
-  const featuredAudio = allMedia.find(m => getMediaType(m) === 'audio');
+  const featuredAudio = allMedia.find(isNarrationAudio);
   const hasPowerPointNotes = 'notes' in data && typeof (data as Topic).notes === 'string';
 
   const extractGoogleImageQueries = () => {
@@ -657,9 +660,16 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
         storageId,
         type: 'audio',
         title: `Narration: ${data.title}`,
-        url: ''
+        url: '',
+        source: 'gemini-tts'
       };
-      onChange({ ...data, media: data.media ? [...data.media, newMedia] : [newMedia] });
+      onChange({
+        ...data,
+        media: [
+          ...(data.media || []).filter(media => !isNarrationAudio(media)),
+          newMedia
+        ]
+      });
       clearAiFailures();
     } catch (e: any) {
       console.error("Failed to generate narration audio", e);
@@ -705,7 +715,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   const handleTranscribe = async () => {
     // 1. Find Audio
-    const audioItem = allMedia.find(m => getMediaType(m) === 'audio');
+    const audioItem = allMedia.find(isNarrationAudio);
     if (!audioItem) {
       alert("No audio file found attached to this page. Please upload narration audio first.");
       return;
@@ -1459,7 +1469,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                             {isCandidate && <span className="text-[9px] bg-violet-200 text-violet-800 px-1 rounded">PPT Candidate</span>}
                                         </div>
                                         <p className="text-[10px] text-slate-500 truncate mb-1">ID: {m.storageId}</p>
-                                        {isCandidate && ['image', 'video'].includes(type) && (
+                                        {isCandidate && (
                                           <button
                                             type="button"
                                             onClick={() => onChange({

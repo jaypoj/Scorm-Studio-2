@@ -583,10 +583,12 @@ const App: React.FC = () => {
         ...project.courseContent.topics,
       ];
 
+  const isNarrationAudioMedia = (media: MediaItem) => media.type === 'audio' && !media.candidate && media.source !== 'powerpoint';
+
   const buildBatchProgress = (pages: Array<Topic | WelcomePage | LearningObjectivesPage>): BatchProgressItem[] => pages.map(page => ({
     pageId: page.id,
     title: page.title,
-    audioStatus: (page.media || []).some(media => media.type === 'audio') ? 'done' : 'pending',
+    audioStatus: (page.media || []).some(isNarrationAudioMedia) ? 'done' : 'pending',
     captionStatus: page.caption ? 'done' : 'pending',
   }));
 
@@ -635,9 +637,10 @@ const App: React.FC = () => {
       storageId,
       type: 'audio',
       title: `Narration: ${page.title}`,
-      url: ''
+      url: '',
+      source: 'gemini-tts'
     };
-    return { ...page, media: [...(page.media || []).filter(media => media.type !== 'audio'), newMedia] };
+    return { ...page, media: [...(page.media || []).filter(media => !isNarrationAudioMedia(media)), newMedia] };
   };
 
   const findAssetFile = async (storageId: string) => {
@@ -704,7 +707,7 @@ const App: React.FC = () => {
       let skippedCount = 0;
 
       for (const page of pages) {
-        const audioItem = (page.media || []).find(media => media.type === 'audio');
+        const audioItem = (page.media || []).find(isNarrationAudioMedia);
         if (!audioItem) {
           skippedCount += 1;
           updateBatchProgressItem(page.id, { captionStatus: 'skipped', message: 'No linked audio.' });

@@ -202,7 +202,7 @@ const extractSlideMedia = async (zip: JSZip, slideXml: string, slidePath: string
       storageId,
       type: kind,
       title: `Slide ${slideIndex + 1} ${kind}`,
-      candidate: kind !== 'audio',
+      candidate: true,
       source: 'powerpoint',
     });
   }

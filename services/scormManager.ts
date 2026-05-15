@@ -204,7 +204,15 @@ export class ScormManager {
           const type = meta.type || (meta.mimeType?.startsWith('video/') ? 'video' : meta.mimeType?.startsWith('audio/') ? 'audio' : 'image');
           const title = meta.title || meta.originalName || meta.original_name || storageId;
           if (page && storageId && !(page.media || []).some(m => m.storageId === storageId)) {
-            page.media = [...(page.media || []), { id: meta.id || storageId, storageId, type, title, url: meta.url || '' }];
+            page.media = [...(page.media || []), {
+              id: meta.id || storageId,
+              storageId,
+              type,
+              title,
+              url: meta.url || '',
+              candidate: Boolean((meta as any).candidate),
+              source: (meta as any).source,
+            }];
             repairedCount += 1;
             logs.push(`Linked ${storageId} to ${page.title}.`);
           }
