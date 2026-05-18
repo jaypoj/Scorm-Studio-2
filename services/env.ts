@@ -1,3 +1,5 @@
+import type { AISettings } from '../types';
+
 declare const __APP_ENV__: {
   GEMINI_API_KEY?: string;
   GEMINI_FALLBACK_API_KEY?: string;
@@ -18,23 +20,27 @@ export const appEnv = {
   pixabayApiKey: env.PIXABAY_API_KEY || '',
 };
 
-export const getGeminiApiKeys = () => {
+export const getGeminiApiKeys = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey'>) => {
   const keys = [
+    settings?.geminiApiKey,
+    settings?.geminiFallbackApiKey,
     env.GEMINI_API_KEY,
     env.GEMINI_FALLBACK_API_KEY,
     env.CUSTOM_GEMINI_API_KEY,
     env.GOOGLE_API_KEY,
+    settings?.googleSearchApiKey,
   ].filter(Boolean) as string[];
 
   return Array.from(new Set(keys));
 };
 
-export const hasGeminiApiKey = () => Boolean(appEnv.geminiApiKey);
+export const hasGeminiApiKey = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey'>) => Boolean(getGeminiApiKeys(settings)[0]);
 
-export const requireGeminiApiKey = () => {
-  if (!appEnv.geminiApiKey) {
-    throw new Error('Missing Gemini API key. Add VITE_GEMINI_API_KEY to .env.local and restart npm run dev.');
+export const requireGeminiApiKey = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey'>) => {
+  const key = getGeminiApiKeys(settings)[0] || appEnv.geminiApiKey;
+  if (!key) {
+    throw new Error('Missing Gemini API key. Add one in AI Settings or configure VITE_GEMINI_API_KEY for the deployed app.');
   }
 
-  return appEnv.geminiApiKey;
+  return key;
 };

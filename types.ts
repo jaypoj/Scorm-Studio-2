@@ -179,6 +179,8 @@ export type ViewState =
 
 export interface AISettings {
   model: string;
+  geminiApiKey?: string;
+  geminiFallbackApiKey?: string;
   googleSearchApiKey?: string;
   googleSearchEngineId?: string;
   pixabayApiKey?: string;

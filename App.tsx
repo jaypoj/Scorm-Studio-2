@@ -7,7 +7,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { NewCourseModal, NewCourseRequest } from './components/NewCourseModal';
 import { ScormManager } from './services/scormManager';
 import { ScormPackager } from './services/scormPackager';
-import { generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
+import { formatGeminiErrorForUser, generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
 import { importPowerPointCourse } from './services/powerPointImporter';
 import { BinaryDecoder } from './services/binaryDecoder';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus } from './types';
@@ -430,7 +430,9 @@ const App: React.FC = () => {
       setNewCourseStatus(null);
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        setNewCourseError(err.message || 'Failed to create course.');
+        setNewCourseError(request.mode === 'ai'
+          ? formatGeminiErrorForUser(err, 'Create New Course')
+          : (err.message || 'Failed to create course.'));
       }
     } finally {
       setIsCreatingCourse(false);
@@ -690,7 +692,7 @@ const App: React.FC = () => {
       alert(`Batch TTS complete. Generated audio for ${pagesById.size} pages.`);
     } catch (error: any) {
       console.error(error);
-      alert(`Batch TTS failed: ${error.message || error}`);
+      alert(`Batch TTS failed:\n\n${formatGeminiErrorForUser(error, 'Batch Generate TTS')}`);
     } finally {
       setBatchJob(null);
     }
@@ -725,7 +727,7 @@ const App: React.FC = () => {
           const file = await fileHandle.getFile();
           const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, 'audio', meta?.mimeType);
           const audioFile = new File([blob], file.name, { type: mimeType || meta?.mimeType || 'audio/wav' });
-          const caption = await transcribeAudioToVTT(audioFile);
+          const caption = await transcribeAudioToVTT(audioFile, aiSettings);
           pagesById.set(page.id, { ...page, caption });
           captionCount += 1;
           updateBatchProgressItem(page.id, { captionStatus: 'done' });
@@ -739,7 +741,7 @@ const App: React.FC = () => {
       alert(`Batch VTT complete. Generated captions for ${captionCount} pages. Skipped ${skippedCount} pages without usable audio.`);
     } catch (error: any) {
       console.error(error);
-      alert(`Batch VTT failed: ${error.message || error}`);
+      alert(`Batch VTT failed:\n\n${formatGeminiErrorForUser(error, 'Batch Generate VTT')}`);
     } finally {
       setBatchJob(null);
     }
@@ -795,8 +797,6 @@ const App: React.FC = () => {
             projectId={projectData.project.id}
             pronunciationConfig={pronunciationConfig}
             onPronunciationConfigChange={savePronunciationConfig}
-            onBatchGenerateTts={handleBatchGenerateTts}
-            onBatchGenerateCaptions={handleBatchGenerateCaptions}
             batchJob={batchJob}
             batchProgress={batchProgress}
         />
@@ -815,8 +815,6 @@ const App: React.FC = () => {
                 projectId={projectData.project.id}
                 pronunciationConfig={pronunciationConfig}
                 onPronunciationConfigChange={savePronunciationConfig}
-                onBatchGenerateTts={handleBatchGenerateTts}
-                onBatchGenerateCaptions={handleBatchGenerateCaptions}
                 batchJob={batchJob}
                 batchProgress={batchProgress}
             />
@@ -978,8 +976,6 @@ const App: React.FC = () => {
               projectId={projectData.project.id}
               pronunciationConfig={pronunciationConfig}
               onPronunciationConfigChange={savePronunciationConfig}
-              onBatchGenerateTts={handleBatchGenerateTts}
-              onBatchGenerateCaptions={handleBatchGenerateCaptions}
               batchJob={batchJob}
               batchProgress={batchProgress}
            />
@@ -1145,6 +1141,10 @@ const App: React.FC = () => {
         onSave={handleSave}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onCloseProject={handleCloseProject}
+        onBatchGenerateTts={handleBatchGenerateTts}
+        onBatchGenerateCaptions={handleBatchGenerateCaptions}
+        batchJob={batchJob}
+        batchDisabled={!context.assetsHandle}
         onCreateNewCourse={() => {
           setNewCourseError(null);
           setNewCourseStatus(null);

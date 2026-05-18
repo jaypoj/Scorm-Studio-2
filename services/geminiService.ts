@@ -4,7 +4,7 @@ import { AISettings, AiRateLimitLevel, CourseContent, PronunciationEntry, Questi
 import { DEFAULT_GEMINI_MODEL } from '../constants';
 import { getGeminiApiKeys, requireGeminiApiKey } from './env';
 
-const getClient = (apiKey = requireGeminiApiKey()) => new GoogleGenAI({ apiKey });
+const getClient = (apiKey: string) => new GoogleGenAI({ apiKey });
 const getModel = (settings?: AISettings) => settings?.model || DEFAULT_GEMINI_MODEL;
 const IMAGE_GENERATION_MODEL = 'gemini-2.5-flash-image';
 const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
@@ -18,12 +18,45 @@ const TRANSCRIPTION_MODELS = [
   DEFAULT_GEMINI_MODEL,
 ];
 
+type GeminiErrorDetails = {
+  apiKeySuffix: string;
+  apiCall: string;
+  apiError: string;
+};
+
+type GeminiError = Error & {
+  geminiDetails?: GeminiErrorDetails;
+};
+
 const stripJsonFences = (value: string) => value.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
 
-async function withGeminiFallback<T>(operation: (client: GoogleGenAI) => Promise<T>): Promise<T> {
-  const apiKeys = getGeminiApiKeys();
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error || 'Unknown error.');
+const getKeySuffix = (apiKey: string) => apiKey.slice(-4) || 'unknown';
+
+const buildGeminiError = (error: unknown, apiKey: string, apiCall: string): GeminiError => {
+  const apiError = getErrorMessage(error);
+  const wrapped = new Error(apiError) as GeminiError;
+  wrapped.geminiDetails = {
+    apiKeySuffix: getKeySuffix(apiKey),
+    apiCall,
+    apiError,
+  };
+  return wrapped;
+};
+
+export const formatGeminiErrorForUser = (error: unknown, fallbackAction = 'Gemini request') => {
+  const details = (error as GeminiError)?.geminiDetails;
+  const apiError = getErrorMessage(error);
+  if (!details) {
+    return `${fallbackAction} failed because of "${apiError}"`;
+  }
+  return `API key ending in "...${details.apiKeySuffix}" was used to generate "${details.apiCall}" and failed because of "${details.apiError}"`;
+};
+
+async function withGeminiFallback<T>(settings: AISettings | undefined, apiCall: string, operation: (client: GoogleGenAI) => Promise<T>): Promise<T> {
+  const apiKeys = getGeminiApiKeys(settings);
   if (apiKeys.length === 0) {
-    throw new Error('Missing Gemini API key. Add VITE_GEMINI_API_KEY to .env.local and restart npm run dev.');
+    throw new Error('Missing Gemini API key. Add one in AI Settings or configure VITE_GEMINI_API_KEY for the deployed app.');
   }
 
   let lastError: unknown;
@@ -31,7 +64,7 @@ async function withGeminiFallback<T>(operation: (client: GoogleGenAI) => Promise
     try {
       return await operation(getClient(apiKey));
     } catch (error) {
-      lastError = error;
+      lastError = buildGeminiError(error, apiKey, apiCall);
     }
   }
 
@@ -223,10 +256,10 @@ async function generateContentWithModelFallback(settings: AISettings, contents: 
   let lastError: unknown;
   for (const model of getCourseModelFallbacks(getModel(settings))) {
     try {
-      return await withGeminiFallback(client => client.models.generateContent({ model, contents, config }));
+      return await withGeminiFallback(settings, `client.models.generateContent(model="${model}", responseMimeType="${config?.responseMimeType || 'default'}")`, client => client.models.generateContent({ model, contents, config }));
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       console.warn(`Gemini model ${model} failed. Trying fallback if available.`, message);
     }
   }
@@ -243,8 +276,9 @@ const isTemporaryGeminiError = (error: unknown) => {
 };
 
 async function generateJson<T>(settings: AISettings, prompt: string): Promise<T> {
-  const response = await withGeminiFallback(client => client.models.generateContent({
-    model: getModel(settings),
+  const model = getModel(settings);
+  const response = await withGeminiFallback(settings, `client.models.generateContent(model="${model}", responseMimeType="application/json")`, client => client.models.generateContent({
+    model,
     contents: prompt,
     config: { responseMimeType: 'application/json' },
   }));
@@ -346,8 +380,8 @@ Term: ${term}
 Course context: ${contextText.slice(0, 6000)}`);
 }
 
-export async function generateImageFromPrompt(prompt: string): Promise<string> {
-  const response: any = await withGeminiFallback(client => client.models.generateContent({
+export async function generateImageFromPrompt(prompt: string, settings?: AISettings): Promise<string> {
+  const response: any = await withGeminiFallback(settings, `client.models.generateContent(model="${IMAGE_GENERATION_MODEL}", responseModalities="IMAGE,TEXT")`, client => client.models.generateContent({
     model: IMAGE_GENERATION_MODEL,
     contents: prompt,
     config: {
@@ -373,7 +407,7 @@ export async function generateNarrationAudio(
   if (!script) throw new Error('Narration script is empty.');
   await throttleTts();
 
-  const response: any = await withGeminiFallback(client => client.models.generateContent({
+  const response: any = await withGeminiFallback(settings, `client.models.generateContent(model="${TTS_MODEL}", responseModalities="AUDIO", voice="${ttsSettings.voiceName}", pace="${ttsSettings.pace}")`, client => client.models.generateContent({
     model: TTS_MODEL,
     contents: [{
       text: `Read this e-learning narration clearly and professionally. ${getPaceInstruction(ttsSettings.pace)}\n\n${script}`,
@@ -403,7 +437,7 @@ export async function generateNarrationAudio(
     : pcmToWav(audioBytes);
 }
 
-export async function transcribeAudioToVTT(file: File): Promise<string> {
+export async function transcribeAudioToVTT(file: File, settings?: AISettings): Promise<string> {
   await throttleTranscription();
   const base64 = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -417,7 +451,7 @@ export async function transcribeAudioToVTT(file: File): Promise<string> {
   for (const model of uniqueModels) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await withGeminiFallback(client => client.models.generateContent({
+        const response = await withGeminiFallback(settings, `client.models.generateContent(model="${model}", transcription="WebVTT", mimeType="${file.type || 'audio/mp3'}")`, client => client.models.generateContent({
           model,
           contents: [
             createPartFromBase64(base64, file.type || 'audio/mp3'),

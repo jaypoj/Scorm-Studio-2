@@ -50,6 +50,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           </div>
 
           <div className="pt-2 border-t border-slate-200">
+             <h3 className="text-sm font-semibold text-slate-800 mb-3">Gemini Runtime Override</h3>
+             <div className="bg-blue-50 text-blue-900 border border-blue-200 text-xs p-3 rounded mb-4">
+                 <p className="font-bold mb-1">Use a temporary key here when the deployed one is throttled.</p>
+                 <p>
+                   These fields override the GitHub Pages bundled Gemini key immediately in this browser. If left blank, the app falls back to the deployed `VITE_*` keys.
+                 </p>
+             </div>
+             <div className="space-y-3">
+                 <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Gemini API Key (Primary Runtime Override)</label>
+                     <input 
+                         type="password"
+                         value={localSettings.geminiApiKey || ''}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, geminiApiKey: e.target.value }))}
+                         className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         placeholder="AIzaSy..."
+                     />
+                 </div>
+                 <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Gemini Fallback Key (Optional)</label>
+                     <input 
+                         type="password"
+                         value={localSettings.geminiFallbackApiKey || ''}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, geminiFallbackApiKey: e.target.value }))}
+                         className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         placeholder="Second key for automatic failover"
+                     />
+                 </div>
+             </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200">
              <h3 className="text-sm font-semibold text-slate-800 mb-3">External API Integrations</h3>
              <div className="bg-amber-50 text-amber-900 border border-amber-200 text-xs p-3 rounded mb-4">
                  <p className="font-bold mb-1">To use image and video search:</p>

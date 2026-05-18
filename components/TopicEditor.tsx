@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Topic, MediaItem, FileSystemDirectoryHandle, FileSystemHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, Question, PronunciationConfig, PronunciationEntry, TtsSettings, BatchJobType, BatchProgressItem } from '../types';
 import { Upload, Image as ImageIcon, Sparkles, Wand2, Mic, Search, BookOpen, ChevronRight, ExternalLink, Activity, X, Info, FileAudio, FileVideo, AlertCircle, Loader2, Link, CheckSquare, Plus, Trash2, CheckCircle2, XCircle, Bot, Maximize2, FileText, Play, Clock } from 'lucide-react';
 import { ScormManager } from '../services/scormManager';
-import { generateImageFromPrompt, generateNarrationAudio, transcribeAudioToVTT, researchTerm, generateDistractors } from '../services/geminiService';
+import { formatGeminiErrorForUser, generateImageFromPrompt, generateNarrationAudio, transcribeAudioToVTT, researchTerm, generateDistractors } from '../services/geminiService';
 import { BinaryDecoder } from '../services/binaryDecoder';
 import { RichTextEditor } from './RichTextEditor';
 import { MediaSearchModal } from './MediaSearchModal';
@@ -18,13 +18,11 @@ interface TopicEditorProps {
   projectId: string;
   pronunciationConfig: PronunciationConfig;
   onPronunciationConfigChange: (config: PronunciationConfig) => void;
-  onBatchGenerateTts: () => Promise<void>;
-  onBatchGenerateCaptions: () => Promise<void>;
   batchJob: BatchJobType;
   batchProgress: BatchProgressItem[];
 }
 
-export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assetsHandle, onAssetCreate, aiSettings, label, projectId, pronunciationConfig, onPronunciationConfigChange, onBatchGenerateTts, onBatchGenerateCaptions, batchJob, batchProgress }) => {
+export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assetsHandle, onAssetCreate, aiSettings, label, projectId, pronunciationConfig, onPronunciationConfigChange, batchJob, batchProgress }) => {
   const [generatingImg, setGeneratingImg] = useState<number | null>(null);
   const [generatingAudio, setGeneratingAudio] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -96,7 +94,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   };
 
   const recordAiFailure = (action: string, error: unknown) => {
-    const message = getFriendlyAiFailureMessage(error);
+    const message = `${getFriendlyAiFailureMessage(error)}\n\n${formatGeminiErrorForUser(error, action)}`;
     setLastAiFailure({ action, message });
     if (!isBackendOrQuotaFailure(error)) return false;
 
@@ -352,8 +350,6 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   const selectedImagePrompts = imagePromptSuggestions
     .map((prompt, index) => ({ prompt, index }))
     .filter(item => selectedImagePromptIndexes.includes(item.index));
-  const activeBatchJob = batchJob !== null;
-
   useEffect(() => {
     setSelectedImagePromptIndexes(imagePromptSuggestions.map((_, index) => index));
     setCustomImagePrompt('');
@@ -573,7 +569,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   const handleGenerateImage = async (promptIndex: number, promptText: string) => {
     setGeneratingImg(promptIndex);
     try {
-       const base64Data = await generateImageFromPrompt(promptText);
+       const base64Data = await generateImageFromPrompt(promptText, aiSettings);
        const byteCharacters = atob(base64Data);
        const byteNumbers = new Array(byteCharacters.length);
        for (let i = 0; i < byteCharacters.length; i++) {
@@ -610,12 +606,12 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
          type: 'image',
          title: `AI Generated: ${promptText.substring(0, 15)}...`
        };
-       onChange({ ...data, media: data.media ? [...data.media, newMedia] : [newMedia] });
-       clearAiFailures();
+      onChange({ ...data, media: data.media ? [...data.media, newMedia] : [newMedia] });
+      clearAiFailures();
     } catch (e: any) {
       console.error("Failed to generate image", e);
       const recoveryOpened = recordAiFailure('Image generation', e);
-      if (!recoveryOpened) alert(`Failed to generate image: ${getFriendlyAiFailureMessage(e)}`);
+      if (!recoveryOpened) alert(`Failed to generate image:\n\n${formatGeminiErrorForUser(e, 'Image generation')}`);
     } finally {
       setGeneratingImg(null);
     }
@@ -674,7 +670,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     } catch (e: any) {
       console.error("Failed to generate narration audio", e);
       const recoveryOpened = recordAiFailure('Text-to-speech narration', e);
-      if (!recoveryOpened) alert(`Failed to generate narration audio: ${getFriendlyAiFailureMessage(e)}`);
+      if (!recoveryOpened) alert(`Failed to generate narration audio:\n\n${formatGeminiErrorForUser(e, 'Text-to-speech narration')}`);
     } finally {
       setGeneratingAudio(false);
     }
@@ -768,7 +764,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
        const fileToSend = new File([blob], file.name, { type: finalMime });
 
        // 4. Send to AI
-       const vtt = await transcribeAudioToVTT(fileToSend);
+       const vtt = await transcribeAudioToVTT(fileToSend, aiSettings);
        
        // 5. Update Editor directly
        onChange({ ...data, caption: vtt });
@@ -776,14 +772,14 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
     } catch (e: any) {
        console.error(e);
-       const message = String(e?.message || e || 'Unknown error.');
+       const message = getErrorMessage(e);
        const friendlyMessage = message.includes('"code":503') || message.includes('UNAVAILABLE')
         ? 'Gemini is temporarily overloaded. The app tried alternate transcription models and keys, but they were unavailable too. Please try again in a few minutes.'
         : message.includes('"code":429') || message.toLowerCase().includes('quota exceeded')
           ? 'Caption generation hit the current API quota. A paid Gemini project or another transcription provider is needed for reliable high-volume captions.'
           : message;
        const recoveryOpened = recordAiFailure('Caption generation', e);
-       if (!recoveryOpened) alert(`Caption Generation Failed: ${friendlyMessage}`);
+       if (!recoveryOpened) alert(`Caption Generation Failed:\n\n${formatGeminiErrorForUser(e, 'Caption generation')}\n\n${friendlyMessage}`);
     } finally {
       setTranscribing(false);
     }
@@ -1186,24 +1182,6 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <button
-                            onClick={onBatchGenerateTts}
-                            disabled={activeBatchJob || !assetsHandle}
-                            className="py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded text-xs font-semibold hover:bg-blue-100 disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                            {batchJob === 'tts' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
-                            Batch Generate TTS
-                        </button>
-                        <button
-                            onClick={onBatchGenerateCaptions}
-                            disabled={activeBatchJob || !assetsHandle}
-                            className="py-2 bg-purple-50 text-purple-700 border border-purple-200 rounded text-xs font-semibold hover:bg-purple-100 disabled:opacity-50 flex items-center justify-center gap-2"
-                        >
-                            {batchJob === 'captions' ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
-                            Batch Generate VTT
-                        </button>
-                    </div>
                     {batchProgress.length > 0 && (
                         <div className="bg-white border border-slate-200 rounded-md p-3 space-y-2">
                             <div className="text-xs font-bold text-slate-700">Batch Progress</div>
