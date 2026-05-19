@@ -7,7 +7,7 @@ import { BinaryDecoder } from '../services/binaryDecoder';
 import { RichTextEditor } from './RichTextEditor';
 import { MediaSearchModal } from './MediaSearchModal';
 import { DEFAULT_TTS_SETTINGS, GEMINI_TTS_VOICES, TTS_PACE_OPTIONS } from '../constants';
-import { buildVttFromNarration, readAudioDurationSeconds } from '../utils/captions';
+import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from '../utils/captions';
 
 interface TopicEditorProps {
   data: Topic | WelcomePage | LearningObjectivesPage;
@@ -765,7 +765,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
        let vtt = '';
 
        if (isGeneratedNarrationAudio && data.narration?.trim()) {
-         const durationSeconds = await readAudioDurationSeconds(blob);
+         const durationSeconds = await readAudioDurationSeconds(blob).catch(() => estimateNarrationDurationSeconds(data.narration));
          vtt = buildVttFromNarration(data.narration, durationSeconds);
        } else {
          // Default fallback if sniffing fails (unlikely for standard audio)

@@ -14,7 +14,7 @@ import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHand
 import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
-import { buildVttFromNarration, readAudioDurationSeconds } from './utils/captions';
+import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
 
 const App: React.FC = () => {
   const [context, setContext] = useState<ProjectContext | null>(null);
@@ -729,7 +729,7 @@ const App: React.FC = () => {
           const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, 'audio', meta?.mimeType);
           const isGeneratedNarrationAudio = meta?.source === 'gemini-tts' || audioItem.source === 'gemini-tts' || (audioItem.title || '').startsWith('Narration:');
           const caption = isGeneratedNarrationAudio && page.narration?.trim()
-            ? buildVttFromNarration(page.narration, await readAudioDurationSeconds(blob))
+            ? buildVttFromNarration(page.narration, await readAudioDurationSeconds(blob).catch(() => estimateNarrationDurationSeconds(page.narration)))
             : await transcribeAudioToVTT(new File([blob], file.name, { type: mimeType || meta?.mimeType || 'audio/wav' }), aiSettings);
           pagesById.set(page.id, { ...page, caption });
           captionCount += 1;

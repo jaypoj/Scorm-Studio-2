@@ -66,6 +66,13 @@ export const readAudioDurationSeconds = (file: Blob) => new Promise<number>((res
   audio.src = url;
 });
 
+export const estimateNarrationDurationSeconds = (text: string) => {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  if (words === 0) return 0;
+  // Rough instructional narration pace: ~145 words per minute.
+  return Math.max(2, (words / 145) * 60);
+};
+
 export const buildVttFromNarration = (text: string, durationSeconds: number) => {
   const chunks = splitNarrationIntoCaptionChunks(text);
   if (chunks.length === 0) return 'WEBVTT\n\n';
