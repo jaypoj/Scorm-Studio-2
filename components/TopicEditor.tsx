@@ -7,6 +7,7 @@ import { BinaryDecoder } from '../services/binaryDecoder';
 import { RichTextEditor } from './RichTextEditor';
 import { MediaSearchModal } from './MediaSearchModal';
 import { DEFAULT_TTS_SETTINGS, GEMINI_TTS_VOICES, TTS_PACE_OPTIONS } from '../constants';
+import { buildVttFromNarration, readAudioDurationSeconds } from '../utils/captions';
 
 interface TopicEditorProps {
   data: Topic | WelcomePage | LearningObjectivesPage;
@@ -726,6 +727,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     try {
        let file: File | null = null;
        let explicitMimeType: string | undefined = undefined;
+       let resolvedAudioSource: string | undefined = audioItem.source;
        
        // 2. Resolve File from FileSystem
        // @ts-ignore
@@ -745,6 +747,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                    const jsonFile = await jsonHandle.getFile();
                    const meta = JSON.parse(await jsonFile.text());
                    if(meta.mimeType) explicitMimeType = meta.mimeType;
+                   if (meta.source) resolvedAudioSource = meta.source;
                } catch(e) { }
 
                break;
@@ -758,13 +761,18 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
        // Gemini API throws 400 for these. We must decode/sniff the real type.
        const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, 'audio', explicitMimeType);
        
-       // Default fallback if sniffing fails (unlikely for standard audio)
-       const finalMime = (mimeType === 'application/octet-stream' || !mimeType) ? 'audio/mp3' : mimeType;
-       
-       const fileToSend = new File([blob], file.name, { type: finalMime });
+       const isGeneratedNarrationAudio = (resolvedAudioSource === 'gemini-tts' || (audioItem.title || '').startsWith('Narration:'));
+       let vtt = '';
 
-       // 4. Send to AI
-       const vtt = await transcribeAudioToVTT(fileToSend, aiSettings);
+       if (isGeneratedNarrationAudio && data.narration?.trim()) {
+         const durationSeconds = await readAudioDurationSeconds(blob);
+         vtt = buildVttFromNarration(data.narration, durationSeconds);
+       } else {
+         // Default fallback if sniffing fails (unlikely for standard audio)
+         const finalMime = (mimeType === 'application/octet-stream' || !mimeType) ? 'audio/mp3' : mimeType;
+         const fileToSend = new File([blob], file.name, { type: finalMime });
+         vtt = await transcribeAudioToVTT(fileToSend, aiSettings);
+       }
        
        // 5. Update Editor directly
        onChange({ ...data, caption: vtt });
