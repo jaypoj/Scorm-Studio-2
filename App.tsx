@@ -9,8 +9,9 @@ import { ScormManager } from './services/scormManager';
 import { ScormPackager } from './services/scormPackager';
 import { formatGeminiErrorForUser, generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
 import { importPowerPointCourse } from './services/powerPointImporter';
+import { importLegacyScormFromFolder, importLegacyScormFromZip } from './services/legacyScormImporter';
 import { BinaryDecoder } from './services/binaryDecoder';
-import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus } from './types';
+import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
 import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
@@ -103,6 +104,7 @@ const App: React.FC = () => {
       setScanResult(null); 
       let discovered: DiscoveredProject[] = [];
       let discoveredRestorePoints = 0;
+      let foundLegacyScormPackage = false;
 
       const countRestoreFiles = async (dirHandle: FileSystemDirectoryHandle) => {
           let count = 0;
@@ -143,6 +145,11 @@ const App: React.FC = () => {
                   } else {
                       subDirectories.push(entry as FileSystemDirectoryHandle);
                   }
+                  if ((entry as FileSystemDirectoryHandle).name.toLowerCase() === 'pages') {
+                      foundLegacyScormPackage = true;
+                  }
+             } else if (entry.kind === 'file' && entryName === 'imsmanifest.xml') {
+                  foundLegacyScormPackage = true;
              }
           }
 
@@ -211,7 +218,11 @@ const App: React.FC = () => {
       } else {
           setContext(null); // Clear context if any
           setView('project-select');
-          setError(discovered.length === 0 ? 'No existing .scormproj files were found. You can create a new course in this folder.' : null);
+          setError(discovered.length === 0
+            ? (foundLegacyScormPackage
+                ? 'A legacy SCORM package was detected in this folder. Use Create New Course -> Import Legacy SCORM to convert it into an editable project.'
+                : 'No existing .scormproj files were found. You can create a new course in this folder.')
+            : null);
       }
   };
 
@@ -351,7 +362,7 @@ const App: React.FC = () => {
     setIsCreatingCourse(true);
     setNewCourseError(null);
     setNewCourseStatus('Preparing course workspace...');
-    setNewCourseProgress(request.mode === 'powerpoint' ? 2 : null);
+    setNewCourseProgress(request.mode === 'powerpoint' || request.mode === 'legacy-scorm' ? 2 : null);
     try {
       let rootHandle = context && !context.isSandbox ? context.rootHandle : null;
       rootHandle = rootHandle || (rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle : null);
@@ -376,7 +387,15 @@ const App: React.FC = () => {
       await writeTextFile(pronunciationHandle, JSON.stringify(initialPronunciationConfig, null, 2));
 
       const generationSettings = { ...aiSettings, model: request.model };
-      setNewCourseStatus(request.mode === 'powerpoint' ? 'Reading PowerPoint slides...' : request.mode === 'ai' ? 'Generating course with AI...' : 'Building starter course...');
+      setNewCourseStatus(
+        request.mode === 'powerpoint'
+          ? 'Reading PowerPoint slides...'
+          : request.mode === 'legacy-scorm'
+            ? 'Reading legacy SCORM package...'
+            : request.mode === 'ai'
+              ? 'Generating course with AI...'
+              : 'Building starter course...'
+      );
       await new Promise(resolve => setTimeout(resolve, 50));
       const importedPowerPoint = request.mode === 'powerpoint' && request.powerPointFile
         ? await importPowerPointCourse(request.powerPointFile, request.courseName, (percent, message) => {
@@ -384,30 +403,61 @@ const App: React.FC = () => {
             setNewCourseStatus(message);
           })
         : null;
+      const importedLegacyScorm = request.mode === 'legacy-scorm'
+        ? (request.legacyScormZipFile
+            ? await importLegacyScormFromZip(request.legacyScormZipFile, request.courseName, (percent, message) => {
+                setNewCourseProgress(percent);
+                setNewCourseStatus(message);
+              })
+            : await importLegacyScormFromFolder(request.legacyScormFolderFiles, request.courseName, (percent, message) => {
+                setNewCourseProgress(percent);
+                setNewCourseStatus(message);
+              }))
+        : null;
       const generatedContent = request.mode === 'ai'
         ? await generateCourseContent(generationSettings, request.courseName, request.topics, request.difficulty, request.referenceFiles, request.rateLimit)
-        : importedPowerPoint?.courseContent;
-      const projectTopics = importedPowerPoint?.topics || request.topics;
+        : importedPowerPoint?.courseContent || importedLegacyScorm?.courseContent;
+      const projectTopics = importedPowerPoint?.topics || importedLegacyScorm?.topics || request.topics;
       const project = ScormManager.createProject(request.courseName, projectTopics, request.difficulty, generatedContent);
       if (importedPowerPoint) {
         project.scormConfig.contentMode = 'ppt-import';
+      }
+      if (importedLegacyScorm) {
+        project.scormConfig = {
+          ...project.scormConfig,
+          ...importedLegacyScorm.scormConfigPatch,
+          contentMode: 'standard',
+        };
       }
 
       if (importedPowerPoint) {
         setNewCourseStatus(`Copying ${importedPowerPoint.mediaFiles.length} PowerPoint media file${importedPowerPoint.mediaFiles.length === 1 ? '' : 's'}...`);
         setNewCourseProgress(92);
-        for (const media of importedPowerPoint.mediaFiles) {
-          const fileHandle = await assetsHandle.getFileHandle(media.file.name, { create: true });
-          const writable = await fileHandle.createWritable();
-          await writable.write(media.file);
-          await writable.close();
-        }
+        await writeImportedMediaFiles(
+          assetsHandle,
+          project,
+          importedPowerPoint.mediaFiles.map(media => ({
+            ...media,
+            pageId: project.courseContent.topics.find(topic => topic.media?.some(item => item.storageId === media.storageId))?.id || 'welcome',
+            type: ((project.courseContent.topics.flatMap(topic => topic.media || []).find(item => item.storageId === media.storageId)?.type || 'image') as 'image' | 'audio' | 'video'),
+            title: project.courseContent.topics.flatMap(topic => topic.media || []).find(item => item.storageId === media.storageId)?.title || media.storageId,
+            source: 'powerpoint',
+          }))
+        );
         if (importedPowerPoint.warnings.length) {
           console.warn('PowerPoint import warnings:', importedPowerPoint.warnings);
         }
       }
+      if (importedLegacyScorm) {
+        setNewCourseStatus(`Copying ${importedLegacyScorm.mediaFiles.length} legacy media file${importedLegacyScorm.mediaFiles.length === 1 ? '' : 's'}...`);
+        setNewCourseProgress(92);
+        await writeImportedMediaFiles(assetsHandle, project, importedLegacyScorm.mediaFiles);
+        if (importedLegacyScorm.warnings.length) {
+          console.warn('Legacy SCORM import warnings:', importedLegacyScorm.warnings);
+        }
+      }
       setNewCourseStatus('Saving project file...');
-      if (importedPowerPoint) setNewCourseProgress(97);
+      if (importedPowerPoint || importedLegacyScorm) setNewCourseProgress(97);
       const fileName = `${courseFolderName}.scormproj`;
       const projectHandle = await courseFolderHandle.getFileHandle(fileName, { create: true });
       await writeTextFile(projectHandle, JSON.stringify(project, null, 2));
@@ -425,7 +475,7 @@ const App: React.FC = () => {
       setContext(nextContext);
       setPronunciationConfig(initialPronunciationConfig);
       setScanResult(null);
-      setView(importedPowerPoint && project.courseContent.topics[0] ? { type: 'topic-edit', id: project.courseContent.topics[0].id } : 'welcome');
+      setView((importedPowerPoint || importedLegacyScorm) && project.courseContent.topics[0] ? { type: 'topic-edit', id: project.courseContent.topics[0].id } : 'welcome');
       setIsNewCourseOpen(false);
       setLastAutoSaveAt(new Date().toLocaleTimeString());
       setNewCourseStatus(null);
@@ -505,6 +555,36 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Failed to write asset", e);
       throw e;
+    }
+  };
+
+  const writeImportedMediaFiles = async (
+    assetsHandle: FileSystemDirectoryHandle,
+    project: ScormProject,
+    mediaFiles: ImportedProjectMediaFile[]
+  ) => {
+    for (const media of mediaFiles) {
+      const fileHandle = await assetsHandle.getFileHandle(media.file.name, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(media.file);
+      await writable.close();
+
+      const metadata = {
+        id: media.storageId,
+        storageId: media.storageId,
+        project_id: project.project.id,
+        page_id: media.pageId,
+        type: media.type,
+        title: media.title,
+        originalName: media.originalName || media.file.name,
+        original_name: media.originalName || media.file.name,
+        mimeType: media.file.type || BinaryDecoder.getMimeTypeFromExtension(media.file.name.split('.').pop() || ''),
+        extension: media.file.name.split('.').pop() || '',
+        source: media.source || 'legacy-import',
+        created: new Date().toISOString()
+      };
+      const metadataHandle = await assetsHandle.getFileHandle(`${media.storageId}.json`, { create: true });
+      await writeTextFile(metadataHandle, JSON.stringify(metadata, null, 2));
     }
   };
 

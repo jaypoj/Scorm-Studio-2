@@ -186,6 +186,16 @@ export interface AISettings {
   pixabayApiKey?: string;
 }
 
+export interface ImportedProjectMediaFile {
+  file: File;
+  storageId: string;
+  pageId: string;
+  type: 'image' | 'audio' | 'video';
+  title: string;
+  source?: string;
+  originalName?: string;
+}
+
 export type AiRateLimitLevel = '0' | 'some' | 'medium' | 'most' | 'full';
 
 export interface PronunciationEntry {

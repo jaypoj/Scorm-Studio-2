@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, BookOpen, FileText, Loader2, Presentation, Upload, X } from 'lucide-react';
+import { Archive, Bot, BookOpen, FileText, FolderArchive, Loader2, Presentation, Upload, X } from 'lucide-react';
 import { AISettings, AiRateLimitLevel } from '../types';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_OPTIONS } from '../constants';
 
@@ -7,11 +7,13 @@ export interface NewCourseRequest {
   courseName: string;
   difficulty: number;
   topics: string[];
-  mode: 'ai' | 'manual' | 'powerpoint';
+  mode: 'ai' | 'manual' | 'powerpoint' | 'legacy-scorm';
   model: string;
   rateLimit: AiRateLimitLevel;
   referenceFiles: File[];
   powerPointFile: File | null;
+  legacyScormZipFile: File | null;
+  legacyScormFolderFiles: File[];
 }
 
 interface NewCourseModalProps {
@@ -36,16 +38,19 @@ const RATE_LIMIT_OPTIONS: { value: AiRateLimitLevel; label: string; helper: stri
 
 const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.json,.md,.html,.htm,.ppt,.pptx';
 const ACCEPTED_POWERPOINT_TYPES = '.ppt,.pptx';
+const ACCEPTED_SCORM_TYPES = '.zip';
 
 export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, progress = null, aiSettings, allowPowerPointImport = false, onClose, onCreate }) => {
   const [courseName, setCourseName] = useState('');
   const [difficulty, setDifficulty] = useState(3);
   const [topicText, setTopicText] = useState('');
-  const [mode, setMode] = useState<'ai' | 'manual' | 'powerpoint'>('ai');
+  const [mode, setMode] = useState<'ai' | 'manual' | 'powerpoint' | 'legacy-scorm'>('ai');
   const [model, setModel] = useState(aiSettings.model || DEFAULT_GEMINI_MODEL);
   const [rateLimit, setRateLimit] = useState<AiRateLimitLevel>('medium');
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
   const [powerPointFile, setPowerPointFile] = useState<File | null>(null);
+  const [legacyScormZipFile, setLegacyScormZipFile] = useState<File | null>(null);
+  const [legacyScormFolderFiles, setLegacyScormFolderFiles] = useState<File[]>([]);
 
   useEffect(() => {
     if (isOpen) setModel(aiSettings.model || DEFAULT_GEMINI_MODEL);
@@ -62,8 +67,9 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
 
   const topics = topicText.split('\n').map(topic => topic.trim().replace(/^[-*]\s*/, '')).filter(Boolean);
   const canCreate = courseName.trim().length > 0
-    && (mode === 'manual' || mode === 'powerpoint' || topics.length > 0)
-    && (mode !== 'powerpoint' || Boolean(powerPointFile));
+    && (mode === 'manual' || mode === 'powerpoint' || mode === 'legacy-scorm' || topics.length > 0)
+    && (mode !== 'powerpoint' || Boolean(powerPointFile))
+    && (mode !== 'legacy-scorm' || Boolean(legacyScormZipFile || legacyScormFolderFiles.length));
   const selectedRateLimit = RATE_LIMIT_OPTIONS.find(option => option.value === rateLimit) || RATE_LIMIT_OPTIONS[2];
   const addReferenceFiles = (files: FileList | File[]) => {
     const incoming = Array.from(files);
@@ -102,7 +108,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             />
           </div>
 
-          <div className={`grid grid-cols-1 ${allowPowerPointImport ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-3`}>
+          <div className={`grid grid-cols-1 ${allowPowerPointImport ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-3`}>
             <button
               onClick={() => setMode('ai')}
               className={`p-4 border rounded-lg text-left transition-colors ${mode === 'ai' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
@@ -119,6 +125,13 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
                 <p className="text-xs text-slate-600 mt-1">Convert each slide into an editable course page and copy slide media into the project.</p>
               </button>
             )}
+            <button
+              onClick={() => setMode('legacy-scorm')}
+              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'legacy-scorm' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+            >
+              <div className="font-semibold text-slate-900 flex items-center gap-2"><Archive className="w-4 h-4" /> Import Legacy SCORM</div>
+              <p className="text-xs text-slate-600 mt-1">Convert an older SCORM package folder or zip into a fully editable course project.</p>
+            </button>
             <button
               onClick={() => setMode('manual')}
               className={`p-4 border rounded-lg text-left transition-colors ${mode === 'manual' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
@@ -169,6 +182,90 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             </div>
           )}
 
+          {mode === 'legacy-scorm' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Legacy SCORM Zip</label>
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = Array.from(e.dataTransfer.files as FileList).find((item: File) => /\.zip$/i.test(item.name));
+                    if (file) {
+                      setLegacyScormZipFile(file);
+                      setLegacyScormFolderFiles([]);
+                    }
+                  }}
+                  className="border-2 border-dashed border-violet-300 rounded-lg bg-violet-50 p-4 text-center"
+                >
+                  <Archive className="w-6 h-6 mx-auto text-violet-500 mb-2" />
+                  <p className="text-sm font-medium text-slate-700">Drop a legacy SCORM .zip here, or browse</p>
+                  <p className="text-xs text-slate-500 mt-1">This is the easiest option. The zip should contain imsmanifest.xml plus pages, media, scripts, and styles.</p>
+                  <label className="inline-flex mt-3 px-3 py-2 bg-white border border-violet-200 rounded text-sm font-semibold text-slate-700 hover:bg-violet-100 cursor-pointer">
+                    Browse Zip
+                    <input
+                      type="file"
+                      accept={ACCEPTED_SCORM_TYPES}
+                      className="hidden"
+                      onChange={(e) => {
+                        setLegacyScormZipFile(e.target.files?.[0] || null);
+                        if (e.target.files?.length) setLegacyScormFolderFiles([]);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                {legacyScormZipFile && (
+                  <div className="mt-3 flex items-center justify-between gap-3 p-2 bg-white border border-violet-200 rounded text-sm">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Archive className="w-4 h-4 text-violet-500 shrink-0" />
+                      <span className="truncate text-slate-800">{legacyScormZipFile.name}</span>
+                      <span className="text-xs text-slate-400 shrink-0">{Math.max(1, Math.round(legacyScormZipFile.size / 1024))} KB</span>
+                    </span>
+                    <button onClick={() => setLegacyScormZipFile(null)} className="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Or Import an Unzipped Legacy Package Folder</label>
+                <div className="border border-slate-200 rounded-lg bg-white p-4">
+                  <div className="flex items-start gap-3">
+                    <FolderArchive className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-800">Select the whole legacy package folder</p>
+                      <p className="text-xs text-slate-500 mt-1">Use this when you already extracted the zip. The folder should contain imsmanifest.xml.</p>
+                    </div>
+                  </div>
+                  <label className="inline-flex mt-3 px-3 py-2 bg-slate-50 border border-slate-300 rounded text-sm font-semibold text-slate-700 hover:bg-slate-100 cursor-pointer">
+                    Browse Folder
+                    <input
+                      type="file"
+                      className="hidden"
+                      multiple
+                      {...({ webkitdirectory: 'true', directory: 'true' } as any)}
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        setLegacyScormFolderFiles(files);
+                        if (files.length) setLegacyScormZipFile(null);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                {legacyScormFolderFiles.length > 0 && (
+                  <div className="mt-3 flex items-center justify-between gap-3 p-2 bg-white border border-slate-200 rounded text-sm">
+                    <span className="flex items-center gap-2 min-w-0">
+                      <FolderArchive className="w-4 h-4 text-slate-500 shrink-0" />
+                      <span className="truncate text-slate-800">{legacyScormFolderFiles.length} imported file{legacyScormFolderFiles.length === 1 ? '' : 's'} selected</span>
+                    </span>
+                    <button onClick={() => setLegacyScormFolderFiles([])} className="text-xs font-semibold text-red-600 hover:text-red-700">Clear</button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {mode === 'ai' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 border border-blue-100 rounded-lg bg-blue-50/60">
               <div>
@@ -203,7 +300,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             </div>
           )}
 
-          {mode !== 'powerpoint' && <div>
+          {mode !== 'powerpoint' && mode !== 'legacy-scorm' && <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Topics</label>
             <textarea
               value={topicText}
@@ -297,12 +394,23 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
         <div className="p-5 border-t border-slate-200 bg-slate-50">
           <button
             type="button"
-            onClick={() => onCreate({ courseName: courseName.trim(), difficulty, topics, mode, model, rateLimit, referenceFiles, powerPointFile })}
+            onClick={() => onCreate({
+              courseName: courseName.trim(),
+              difficulty,
+              topics,
+              mode,
+              model,
+              rateLimit,
+              referenceFiles,
+              powerPointFile,
+              legacyScormZipFile,
+              legacyScormFolderFiles,
+            })}
             disabled={!canCreate || isCreating}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold flex items-center justify-center gap-2"
           >
-            {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === 'ai' ? <Bot className="w-4 h-4" /> : mode === 'powerpoint' ? <Presentation className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
-            {isCreating ? (status || 'Creating Course...') : mode === 'powerpoint' ? 'Import PowerPoint & Create Course' : 'Choose Folder & Create Course'}
+            {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === 'ai' ? <Bot className="w-4 h-4" /> : mode === 'powerpoint' ? <Presentation className="w-4 h-4" /> : mode === 'legacy-scorm' ? <Archive className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
+            {isCreating ? (status || 'Creating Course...') : mode === 'powerpoint' ? 'Import PowerPoint & Create Course' : mode === 'legacy-scorm' ? 'Import Legacy SCORM & Create Course' : 'Choose Folder & Create Course'}
           </button>
         </div>
       </div>
