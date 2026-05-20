@@ -59,8 +59,18 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   // Auto-discovered items that haven't been saved to JSON yet
   const [discoveredMedia, setDiscoveredMedia] = useState<MediaItem[]>([]);
 
+  const inferMediaType = (m: Partial<MediaItem>): string => {
+    const explicit = String(m.type || '').toLowerCase();
+    if (['image', 'audio', 'video', 'caption'].includes(explicit)) return explicit;
+    const descriptor = [m.storageId, m.url, m.title].filter(Boolean).join(' ').toLowerCase();
+    if (/\.(png|jpe?g|gif|webp|svg|bmp|avif|tiff?)\b/.test(descriptor)) return 'image';
+    if (/\.(mp3|wav|m4a|aac|ogg)\b/.test(descriptor)) return 'audio';
+    if (/\.(mp4|webm|mov|m4v|avi|mkv)\b/.test(descriptor) || /youtube\.com\/embed|youtu\.be\//.test(descriptor)) return 'video';
+    return explicit || 'image';
+  };
+
   // Helper to safely get lowercase type
-  const getMediaType = (m: MediaItem): string => (m.type || '').toLowerCase();
+  const getMediaType = (m: MediaItem): string => inferMediaType(m);
 
   // Helper to check if this is a Topic page (supports KC)
   const isTopicPage = data.id.startsWith('topic-');
@@ -162,8 +172,12 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                              const alreadyLinked = data.media?.some(m => m.storageId === storageId);
                              
                              if (!alreadyLinked) {
-                                 const inferredType = meta.type ||
-                                     (meta.mimeType?.startsWith('video/') ? 'video' : meta.mimeType?.startsWith('audio/') ? 'audio' : 'image');
+                                 const inferredType = inferMediaType({
+                                     type: meta.type,
+                                     storageId,
+                                     title: meta.title || meta.originalName || meta.original_name,
+                                     url: meta.url,
+                                 });
                                  potentiallyDiscovered.push({
                                      id: `discovered-${storageId}`, 
                                      storageId: storageId,
@@ -254,8 +268,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
              if (fileHandle) {
                 const file = await fileHandle.getFile();
-                const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, media.type, explicitMimeType);
-                if (media.type === 'image' && !mimeType.startsWith('image/')) {
+                const expectedType = getMediaType(media) as 'image' | 'audio' | 'video';
+                const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, expectedType, explicitMimeType);
+                if (expectedType === 'image' && !mimeType.startsWith('image/')) {
                     logs.push(`Skipped ${media.storageId}: decoded MIME ${mimeType} is not an image.`);
                     continue;
                 }

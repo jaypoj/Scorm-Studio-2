@@ -1,5 +1,65 @@
 import { CourseContent, ScormProject, FileSystemDirectoryHandle, MediaItem } from '../types';
 
+const inferMediaType = (media: Partial<MediaItem> & { mimeType?: string; originalName?: string; original_name?: string; url?: string; storageId?: string; title?: string }): MediaItem['type'] => {
+  const rawType = String(media.type || '').toLowerCase();
+  if (rawType === 'image' || rawType === 'audio' || rawType === 'video' || rawType === 'caption') {
+    return rawType as MediaItem['type'];
+  }
+  const mimeType = String(media.mimeType || '').toLowerCase();
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  if (mimeType.startsWith('video/')) return 'video';
+  const descriptor = [media.storageId, media.originalName, media.original_name, media.url, media.title]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|svg|bmp|avif|tiff?)\b/.test(descriptor)) return 'image';
+  if (/\.(mp3|wav|m4a|aac|ogg)\b/.test(descriptor)) return 'audio';
+  if (/\.(mp4|webm|mov|m4v|avi|mkv)\b/.test(descriptor) || /youtube\.com\/embed|youtu\.be\//.test(descriptor)) return 'video';
+  return 'image';
+};
+
+const normalizeMediaItem = (media: any): MediaItem | null => {
+  if (!media) return null;
+  const storageId = String(media.storageId || media.id || '').trim();
+  const url = typeof media.url === 'string' ? media.url : '';
+  if (!storageId && !url) return null;
+  const type = inferMediaType(media);
+  return {
+    id: String(media.id || storageId || `${type}-${Date.now()}`),
+    storageId: storageId || `external-${type}-${Date.now()}`,
+    type,
+    title: media.title || media.originalName || media.original_name || storageId || url || `${type} asset`,
+    url,
+    content: media.content,
+    candidate: Boolean(media.candidate),
+    source: media.source,
+  };
+};
+
+const dedupeMedia = (items: Array<MediaItem | null | undefined>): MediaItem[] => {
+  const seen = new Set<string>();
+  const normalized: MediaItem[] = [];
+  for (const item of items) {
+    if (!item) continue;
+    const key = `${item.storageId}||${item.url || ''}||${item.type}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(item);
+  }
+  return normalized;
+};
+
+const normalizePageMedia = (page: any, legacyProjectMedia: any[]): MediaItem[] => {
+  const pageId = page?.id;
+  const directMedia = Array.isArray(page?.media) ? page.media : [];
+  const legacyLinkedMedia = legacyProjectMedia.filter(item => {
+    const linkedPageId = item?.page_id || item?.pageId || item?.page;
+    return pageId && linkedPageId === pageId;
+  });
+  return dedupeMedia([...directMedia, ...legacyLinkedMedia].map(normalizeMediaItem));
+};
+
 const emptyPage = (id: string, title: string) => ({
   id,
   title,
@@ -110,10 +170,26 @@ export class ScormManager {
 
   static prepareForSave(project: ScormProject): ScormProject {
     const now = new Date().toISOString();
+    const legacyProjectMedia = [
+      ...(project.media?.images || []),
+      ...(project.media?.videos || []),
+      ...(project.media?.audio || []),
+    ];
     const courseContent: CourseContent = {
-      welcomePage: { ...emptyPage('welcome', 'Welcome'), ...(project.courseContent?.welcomePage || {}) },
-      learningObjectivesPage: { ...emptyPage('objectives', 'Learning Objectives'), ...(project.courseContent?.learningObjectivesPage || {}) },
-      topics: project.courseContent?.topics || [],
+      welcomePage: {
+        ...emptyPage('welcome', 'Welcome'),
+        ...(project.courseContent?.welcomePage || {}),
+        media: normalizePageMedia(project.courseContent?.welcomePage, legacyProjectMedia),
+      },
+      learningObjectivesPage: {
+        ...emptyPage('objectives', 'Learning Objectives'),
+        ...(project.courseContent?.learningObjectivesPage || {}),
+        media: normalizePageMedia(project.courseContent?.learningObjectivesPage, legacyProjectMedia),
+      },
+      topics: (project.courseContent?.topics || []).map(topic => ({
+        ...topic,
+        media: normalizePageMedia(topic, legacyProjectMedia),
+      })),
       assessment: project.courseContent?.assessment || { narration: null, passMark: 80, questions: [] },
       lastModified: now,
     };
@@ -201,7 +277,7 @@ export class ScormManager {
           }
           const page = pages.find(p => p.id === meta.page_id);
           const storageId = meta.storageId || meta.id;
-          const type = meta.type || (meta.mimeType?.startsWith('video/') ? 'video' : meta.mimeType?.startsWith('audio/') ? 'audio' : 'image');
+          const type = inferMediaType({ ...meta, storageId });
           const title = meta.title || meta.originalName || meta.original_name || storageId;
           if (page && storageId && !(page.media || []).some(m => m.storageId === storageId)) {
             page.media = [...(page.media || []), {
