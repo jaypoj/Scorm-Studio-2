@@ -181,6 +181,7 @@ export interface AISettings {
   model: string;
   geminiApiKey?: string;
   geminiFallbackApiKey?: string;
+  allowBundledGeminiFallback?: boolean;
   googleSearchApiKey?: string;
   googleSearchEngineId?: string;
   pixabayApiKey?: string;

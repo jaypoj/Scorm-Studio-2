@@ -50,11 +50,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           </div>
 
           <div className="pt-2 border-t border-slate-200">
-             <h3 className="text-sm font-semibold text-slate-800 mb-3">Gemini Runtime Override</h3>
+             <h3 className="text-sm font-semibold text-slate-800 mb-3">Gemini Key Control</h3>
              <div className="bg-blue-50 text-blue-900 border border-blue-200 text-xs p-3 rounded mb-4">
-                 <p className="font-bold mb-1">Use a temporary key here when the deployed one is throttled.</p>
+                 <p className="font-bold mb-1">Runtime Gemini keys are now the default source for AI calls.</p>
                  <p>
-                   These fields override the GitHub Pages bundled Gemini key immediately in this browser. If left blank, the app falls back to the deployed `VITE_*` keys.
+                   Enter a primary and optional fallback Gemini key here. Bundled GitHub Pages Gemini keys are off by default unless you explicitly re-enable them below.
                  </p>
              </div>
              <div className="space-y-3">
@@ -78,6 +78,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                          placeholder="Second key for automatic failover"
                      />
                  </div>
+                 <label className="flex items-start gap-3 p-3 rounded border border-slate-200 bg-slate-50">
+                     <input
+                         type="checkbox"
+                         checked={Boolean(localSettings.allowBundledGeminiFallback)}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, allowBundledGeminiFallback: e.target.checked }))}
+                         className="mt-0.5"
+                     />
+                     <span className="text-xs text-slate-700">
+                         <span className="block font-semibold text-slate-800">Allow bundled GitHub Pages Gemini fallback</span>
+                         Keep this off for deterministic runtime-only behavior. Turn it on only if you intentionally want the deployed `VITE_*` Gemini key to be used after your runtime keys fail.
+                     </span>
+                 </label>
              </div>
           </div>
 

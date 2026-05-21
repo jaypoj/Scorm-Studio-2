@@ -46,12 +46,20 @@ const App: React.FC = () => {
   const [aiSettings, setAiSettings] = useState<AISettings>(() => {
     const saved = localStorage.getItem('scorm_ai_settings');
     // Using default model constant
-    return saved ? JSON.parse(saved) : { model: DEFAULT_GEMINI_MODEL };
+    const parsed = saved ? JSON.parse(saved) : { model: DEFAULT_GEMINI_MODEL };
+    return {
+      allowBundledGeminiFallback: false,
+      ...parsed,
+    };
   });
 
   const saveAiSettings = (s: AISettings) => {
-    setAiSettings(s);
-    localStorage.setItem('scorm_ai_settings', JSON.stringify(s));
+    const normalized = {
+      allowBundledGeminiFallback: false,
+      ...s,
+    };
+    setAiSettings(normalized);
+    localStorage.setItem('scorm_ai_settings', JSON.stringify(normalized));
   };
 
   // INTEGRITY SCANNER EFFECT

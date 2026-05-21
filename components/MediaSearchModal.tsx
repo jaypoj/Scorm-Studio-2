@@ -183,8 +183,7 @@ export const MediaSearchModal: React.FC<MediaSearchModalProps> = ({ isOpen, onCl
         } else {
             const keysToTry = [
                 settings.googleSearchApiKey,
-                appEnv.googleSearchApiKey,
-                appEnv.geminiApiKey
+                appEnv.googleSearchApiKey
             ].filter(Boolean) as string[];
 
             if (keysToTry.length === 0) {

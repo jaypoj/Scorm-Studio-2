@@ -56,7 +56,7 @@ export const formatGeminiErrorForUser = (error: unknown, fallbackAction = 'Gemin
 async function withGeminiFallback<T>(settings: AISettings | undefined, apiCall: string, operation: (client: GoogleGenAI) => Promise<T>): Promise<T> {
   const apiKeys = getGeminiApiKeys(settings);
   if (apiKeys.length === 0) {
-    throw new Error('Missing Gemini API key. Add one in AI Settings or configure VITE_GEMINI_API_KEY for the deployed app.');
+    throw new Error('Missing Gemini API key. Add one in AI Settings.');
   }
 
   let lastError: unknown;

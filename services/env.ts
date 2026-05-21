@@ -20,10 +20,18 @@ export const appEnv = {
   pixabayApiKey: env.PIXABAY_API_KEY || '',
 };
 
-export const getGeminiApiKeys = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey'>) => {
-  const keys = [
+export const getGeminiApiKeys = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey' | 'allowBundledGeminiFallback'>) => {
+  const runtimeKeys = [
     settings?.geminiApiKey,
     settings?.geminiFallbackApiKey,
+  ].filter(Boolean) as string[];
+
+  if (!settings?.allowBundledGeminiFallback) {
+    return Array.from(new Set(runtimeKeys));
+  }
+
+  const keys = [
+    ...runtimeKeys,
     env.GEMINI_API_KEY,
     env.GEMINI_FALLBACK_API_KEY,
     env.CUSTOM_GEMINI_API_KEY,
@@ -34,12 +42,12 @@ export const getGeminiApiKeys = (settings?: Pick<AISettings, 'geminiApiKey' | 'g
   return Array.from(new Set(keys));
 };
 
-export const hasGeminiApiKey = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey'>) => Boolean(getGeminiApiKeys(settings)[0]);
+export const hasGeminiApiKey = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey' | 'allowBundledGeminiFallback'>) => Boolean(getGeminiApiKeys(settings)[0]);
 
-export const requireGeminiApiKey = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey'>) => {
-  const key = getGeminiApiKeys(settings)[0] || appEnv.geminiApiKey;
+export const requireGeminiApiKey = (settings?: Pick<AISettings, 'geminiApiKey' | 'geminiFallbackApiKey' | 'googleSearchApiKey' | 'allowBundledGeminiFallback'>) => {
+  const key = getGeminiApiKeys(settings)[0] || (settings?.allowBundledGeminiFallback ? appEnv.geminiApiKey : '');
   if (!key) {
-    throw new Error('Missing Gemini API key. Add one in AI Settings or configure VITE_GEMINI_API_KEY for the deployed app.');
+    throw new Error('Missing Gemini API key. Add one in AI Settings.');
   }
 
   return key;

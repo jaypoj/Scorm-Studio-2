@@ -1732,7 +1732,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                       </div>
 
                       <div className="text-xs text-slate-600 space-y-2">
-                          <p>Add a new Gemini key locally as `VITE_GEMINI_API_KEY` or `VITE_GEMINI_FALLBACK_API_KEY`, then restart Vite.</p>
+                          <p>Add a new Gemini key in AI Settings. Runtime keys are now the default source for course generation, TTS, captions, and image generation.</p>
                           <p>If the error says quota is zero for image generation, a new free project key may help temporarily, but Google may require billing for reliable image API access.</p>
                       </div>
 
