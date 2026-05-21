@@ -9,6 +9,41 @@ const safeId = (value: string) => value.replace(/[^a-z0-9-_]/gi, '-').toLowerCas
 
 const getMediaKind = (media: MediaItem) => (media.type || '').toLowerCase();
 const withoutExtension = (value: string) => value.replace(/\.[^.]+$/, '');
+const getExtension = (value: string) => value.split('.').pop()?.toLowerCase() || '';
+const normalizeExtension = (value: string) => {
+  const ext = value.toLowerCase().replace(/^\./, '');
+  if (ext === 'jpeg' || ext === 'jfif' || ext === 'pjpeg' || ext === 'pjp') return 'jpg';
+  if (ext === 'svg+xml') return 'svg';
+  if (ext === 'quicktime') return 'mov';
+  if (ext === 'mpeg') return 'mp3';
+  return ext;
+};
+const extensionFromMimeType = (mimeType = '') => {
+  const normalized = mimeType.toLowerCase().split(';')[0].trim();
+  const map: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+    'image/avif': 'avif',
+    'image/bmp': 'bmp',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/wav': 'wav',
+    'audio/webm': 'webm',
+    'audio/mp4': 'm4a',
+    'video/mp4': 'mp4',
+    'video/webm': 'webm',
+    'video/quicktime': 'mov',
+  };
+  return map[normalized] || normalizeExtension(normalized.split('/')[1] || '');
+};
+const getPackageFileName = (storageId: string, originalName: string, mimeType = '') => {
+  const ext = extensionFromMimeType(mimeType) || normalizeExtension(getExtension(originalName)) || 'bin';
+  return `${safeId(storageId || withoutExtension(originalName))}.${ext}`;
+};
 const getAssetSrc = (assetMap: Map<string, string>, media: MediaItem) =>
   assetMap.get(media.storageId) ||
   assetMap.get(media.storageId?.toLowerCase?.() || '') ||
@@ -60,7 +95,7 @@ const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: M
     const src = getAssetSrc(assetMap, media);
     if (!src) return '';
     if (kind === 'image') {
-      return `<figure class="media-frame"><img src="${escapeHtml(src)}" alt="${escapeHtml(media.title || page.title)}"></figure>`;
+      return `<figure class="media-frame"><img src="${escapeHtml(src)}" alt="${escapeHtml(media.title || page.title)}" referrerpolicy="no-referrer"></figure>`;
     }
     if (src.includes('youtube.com/embed') || src.includes('youtu.be')) {
       return `<div class="video-frame"><iframe src="${escapeHtml(src)}" title="${escapeHtml(media.title || 'Video')}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div>`;
@@ -227,9 +262,16 @@ export class ScormPackager {
               metadataStem,
             ].filter(Boolean).map((value: string) => String(value));
 
+            const primaryStorageId = storageIds[0] || metadataStem;
+            const packagedName = getPackageFileName(primaryStorageId, asset.name, metadata?.mimeType || asset.file.type);
+            const packagedHref = `media/${packagedName}`;
+            if (packagedHref !== asset.href) {
+              zip.file(packagedHref, asset.file);
+            }
+
             for (const storageId of storageIds) {
-              assetMap.set(storageId, asset.href);
-              assetMap.set(storageId.toLowerCase(), asset.href);
+              assetMap.set(storageId, packagedHref);
+              assetMap.set(storageId.toLowerCase(), packagedHref);
             }
           } catch (metadataError) {
             console.warn(`Unable to read asset metadata ${metadataStem}.json`, metadataError);
