@@ -8,6 +8,12 @@ const escapeHtml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&
 const safeId = (value: string) => value.replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
 
 const getMediaKind = (media: MediaItem) => (media.type || '').toLowerCase();
+const withoutExtension = (value: string) => value.replace(/\.[^.]+$/, '');
+const getAssetSrc = (assetMap: Map<string, string>, media: MediaItem) =>
+  assetMap.get(media.storageId) ||
+  assetMap.get(media.storageId?.toLowerCase?.() || '') ||
+  media.url ||
+  '';
 
 const renderQuestion = (question: Question, index: number, prefix: string) => {
   const name = `${prefix}-q-${index}`;
@@ -51,7 +57,7 @@ const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: M
   const audio = (page.media || []).find(media => getMediaKind(media) === 'audio');
   const visualHtml = visual.map(media => {
     const kind = getMediaKind(media);
-    const src = assetMap.get(media.storageId) || media.url || '';
+    const src = getAssetSrc(assetMap, media);
     if (!src) return '';
     if (kind === 'image') {
       return `<figure class="media-frame"><img src="${escapeHtml(src)}" alt="${escapeHtml(media.title || page.title)}"></figure>`;
@@ -62,7 +68,7 @@ const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: M
     return `<div class="video-frame"><video controls src="${escapeHtml(src)}"></video></div>`;
   }).filter(Boolean).join('');
 
-  const audioSrc = audio ? (assetMap.get(audio.storageId) || audio.url || '') : '';
+  const audioSrc = audio ? getAssetSrc(assetMap, audio) : '';
   const captionSrc = captionMap.get(page.id);
   const audioId = `audio-${safeId(page.id)}`;
   const audioHtml = audioSrc ? `<aside class="audio-dock">
@@ -151,15 +157,83 @@ export class ScormPackager {
 
     if (assetsHandle) {
       try {
+        const assetFiles = new Map<string, { name: string; href: string; file: File }>();
+        const metadataFiles = new Map<string, File>();
+
         // @ts-ignore browser File System Access API async iterator
         for await (const entry of assetsHandle.values()) {
           if (entry.kind !== 'file') continue;
           const file = await (entry as any).getFile();
-          if (entry.name.toLowerCase().endsWith('.json')) continue;
+          const lowerName = entry.name.toLowerCase();
+          if (lowerName.endsWith('.json')) {
+            metadataFiles.set(withoutExtension(lowerName), file);
+            continue;
+          }
+
           const href = `media/${entry.name}`;
           zip.file(href, file);
-          const storageId = entry.name.replace(/\.[^.]+$/, '');
+          assetFiles.set(entry.name, { name: entry.name, href, file });
+          assetFiles.set(lowerName, { name: entry.name, href, file });
+
+          const storageId = withoutExtension(entry.name);
           assetMap.set(storageId, href);
+          assetMap.set(storageId.toLowerCase(), href);
+        }
+
+        const findAssetByMetadata = (metadata: any, metadataStem: string) => {
+          const candidates = [
+            metadata?.storageId,
+            metadata?.id,
+            metadataStem,
+            metadata?.originalName,
+            metadata?.original_name,
+            metadata?.fileName,
+            metadata?.filename,
+            metadata?.name,
+          ].filter(Boolean).map((value: string) => String(value));
+
+          for (const candidate of candidates) {
+            const lower = candidate.toLowerCase();
+            const exact = assetFiles.get(candidate) || assetFiles.get(lower);
+            if (exact) return exact;
+
+            const stem = withoutExtension(candidate);
+            const byStem = assetFiles.get(stem) || assetFiles.get(stem.toLowerCase());
+            if (byStem) return byStem;
+          }
+
+          for (const candidate of candidates) {
+            const stem = withoutExtension(candidate).toLowerCase();
+            for (const [name, asset] of assetFiles.entries()) {
+              const fileStem = withoutExtension(name).toLowerCase();
+              if (fileStem === stem || fileStem.startsWith(stem) || stem.startsWith(fileStem)) {
+                return asset;
+              }
+            }
+          }
+
+          return null;
+        };
+
+        for (const [metadataStem, metadataFile] of metadataFiles.entries()) {
+          try {
+            const metadata = JSON.parse(await metadataFile.text());
+            const asset = findAssetByMetadata(metadata, metadataStem);
+            if (!asset) continue;
+
+            const storageIds = [
+              metadata?.storageId,
+              metadata?.id,
+              metadataStem,
+            ].filter(Boolean).map((value: string) => String(value));
+
+            for (const storageId of storageIds) {
+              assetMap.set(storageId, asset.href);
+              assetMap.set(storageId.toLowerCase(), asset.href);
+            }
+          } catch (metadataError) {
+            console.warn(`Unable to read asset metadata ${metadataStem}.json`, metadataError);
+          }
         }
       } catch (error) {
         console.warn('Unable to include linked assets in package.', error);
