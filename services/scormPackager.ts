@@ -24,6 +24,8 @@ type ImageExportReport = {
   };
   images: ImageExportDiagnostic[];
 };
+type AssetFile = { name: string; href: string; file: File };
+type CaptionFile = { name: string; file: File };
 
 const escapeXml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[ch]!));
 const escapeHtml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch]!));
@@ -32,6 +34,10 @@ const safeId = (value: string) => value.replace(/[^a-z0-9-_]/gi, '-').toLowerCas
 const getMediaKind = (media: MediaItem) => (media.type || '').toLowerCase();
 const withoutExtension = (value: string) => value.replace(/\.[^.]+$/, '');
 const getExtension = (value: string) => value.split('.').pop()?.toLowerCase() || '';
+const getStemNumber = (value: string, prefix: string) => {
+  const match = withoutExtension(value).match(new RegExp(`^${prefix}-(\\d+)$`, 'i'));
+  return match ? Number(match[1]) : null;
+};
 const normalizeExtension = (value: string) => {
   const ext = value.toLowerCase().replace(/^\./, '');
   if (ext === 'jpeg' || ext === 'jfif' || ext === 'pjpeg' || ext === 'pjp') return 'jpg';
@@ -121,6 +127,16 @@ const sniffImageMimeType = async (file: File) => {
   if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp';
   if (bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp';
   if (ascii.slice(4, 12) === 'ftypavif' || ascii.slice(4, 12) === 'ftypavis') return 'image/avif';
+  return '';
+};
+
+const sniffAudioMimeType = async (file: File) => {
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const ascii = String.fromCharCode(...bytes);
+  if (ascii.startsWith('ID3') || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) return 'audio/mpeg';
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
+  if (ascii.startsWith('OggS')) return 'audio/ogg';
+  if (ascii.slice(4, 8) === 'ftyp') return 'audio/mp4';
   return '';
 };
 
@@ -215,7 +231,7 @@ const packageInlineContentImages = async (
   inlineAssetHrefs: string[],
   inlineImageCache: Map<string, string>,
   imageDiagnostics: ImageExportDiagnostic[],
-  assetFiles: Map<string, { name: string; href: string; file: File }>
+  assetFiles: Map<string, AssetFile>
 ) => {
   if (!page.content?.includes('<img')) return page.content || '';
 
@@ -307,7 +323,7 @@ const getLegacyImageStemsForPage = (page: Page, pageIndex: number) => {
 };
 
 const chooseLegacyImageAsset = (
-  assetFiles: Map<string, { name: string; href: string; file: File }>,
+  assetFiles: Map<string, AssetFile>,
   stem: string
 ) => {
   const uniqueAssets = Array.from(
@@ -327,10 +343,31 @@ const chooseLegacyImageAsset = (
     .sort((a, b) => b.score - a.score)[0]?.asset || null;
 };
 
+const chooseLegacyAudioAsset = (
+  assetFiles: Map<string, AssetFile>,
+  stem: string
+) => {
+  const uniqueAssets = Array.from(
+    new Map(Array.from(assetFiles.values()).map(asset => [asset.href, asset])).values()
+  );
+  const extensionPreference = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'webm', 'bin'];
+  const candidates = uniqueAssets.filter(asset => withoutExtension(asset.name).toLowerCase() === stem.toLowerCase());
+  return candidates
+    .map(asset => {
+      const ext = normalizeExtension(getExtension(asset.name));
+      const rank = extensionPreference.indexOf(ext);
+      return {
+        asset,
+        score: rank >= 0 ? extensionPreference.length - rank : 0,
+      };
+    })
+    .sort((a, b) => b.score - a.score)[0]?.asset || null;
+};
+
 const packageLegacyPageImages = async (
   pages: Page[],
   zip: JSZip,
-  assetFiles: Map<string, { name: string; href: string; file: File }>,
+  assetFiles: Map<string, AssetFile>,
   assetMap: Map<string, string>,
   imageDiagnostics: ImageExportDiagnostic[]
 ) => {
@@ -388,6 +425,99 @@ const packageLegacyPageImages = async (
   }
 
   return extraMediaByPageId;
+};
+
+const getLegacyAudioStemsForPage = (page: Page, pageIndex: number) => {
+  const stems = new Set<string>([`audio-${pageIndex}`]);
+  const topicMatch = page.id.match(/^topic-(\d+)$/i);
+  if (topicMatch) stems.add(`audio-${topicMatch[1]}`);
+  stems.add(`audio-${safeId(page.id)}`);
+  return Array.from(stems);
+};
+
+const packageLegacyPageAudio = async (
+  pages: Page[],
+  zip: JSZip,
+  assetFiles: Map<string, AssetFile>,
+  assetMap: Map<string, string>
+) => {
+  const extraMediaByPageId = new Map<string, MediaItem[]>();
+
+  for (const [pageIndex, page] of pages.entries()) {
+    const hasAudio = (page.media || []).some(media => getMediaKind(media) === 'audio');
+    if (hasAudio) continue;
+
+    for (const stem of getLegacyAudioStemsForPage(page, pageIndex)) {
+      const asset = chooseLegacyAudioAsset(assetFiles, stem);
+      if (!asset) continue;
+
+      const explicitMimeType = asset.file.type || mimeTypeFromExtension(asset.name) || await sniffAudioMimeType(asset.file) || 'audio/mpeg';
+      const packageFile = withMimeType(asset.file, explicitMimeType, asset.name);
+      const packagedName = getPackageFileName(stem, asset.name, explicitMimeType);
+      const packagedHref = `media/${packagedName}`;
+      zip.file(packagedHref, packageFile);
+      assetMap.set(stem, packagedHref);
+      assetMap.set(stem.toLowerCase(), packagedHref);
+
+      extraMediaByPageId.set(page.id, [{
+        id: `legacy-${page.id}-${stem}`,
+        storageId: stem,
+        type: 'audio',
+        title: stem,
+        source: 'legacy-page-audio',
+      }]);
+      break;
+    }
+  }
+
+  return extraMediaByPageId;
+};
+
+const readLegacyCaptionFiles = async (rootHandle: FileSystemDirectoryHandle | null) => {
+  if (!rootHandle) return [] as CaptionFile[];
+  const candidateNames = ['Captions', 'captions'];
+  for (const name of candidateNames) {
+    try {
+      const captionsHandle = await rootHandle.getDirectoryHandle(name);
+      const captions: CaptionFile[] = [];
+      // @ts-ignore browser File System Access API async iterator
+      for await (const entry of captionsHandle.values()) {
+        if (entry.kind !== 'file' || !entry.name.toLowerCase().endsWith('.vtt')) continue;
+        captions.push({ name: entry.name, file: await (entry as any).getFile() });
+      }
+      return captions.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    } catch {}
+  }
+  return [] as CaptionFile[];
+};
+
+const packageLegacyCaptionFiles = async (
+  pages: Page[],
+  zip: JSZip,
+  captionMap: Map<string, string>,
+  rootHandle: FileSystemDirectoryHandle | null
+) => {
+  const captionFiles = await readLegacyCaptionFiles(rootHandle);
+  for (const [pageIndex, page] of pages.entries()) {
+    if (captionMap.has(page.id)) continue;
+
+    const numberedCandidates = [
+      `caption-${pageIndex}`,
+      `caption-${pageIndex + 1}`,
+      `${String(pageIndex + 1).padStart(4, '0')}-`,
+      `${String(pageIndex).padStart(4, '0')}-`,
+    ];
+    const captionFile = captionFiles.find(item => {
+      const lower = item.name.toLowerCase();
+      return numberedCandidates.some(candidate => lower.startsWith(candidate.toLowerCase()));
+    }) || captionFiles[pageIndex];
+    if (!captionFile) continue;
+
+    const captionHref = `media/caption-${safeId(page.id)}.vtt`;
+    const text = await captionFile.file.text();
+    zip.file(captionHref, text.trimStart().startsWith('WEBVTT') ? text : `WEBVTT\n\n${text}`);
+    captionMap.set(page.id, captionHref);
+  }
 };
 
 const renderQuestion = (question: Question, index: number, prefix: string) => {
@@ -522,7 +652,7 @@ document.addEventListener('DOMContentLoaded',()=>{el('prev-button').onclick=prev
 export class ScormPackager {
   static lastImageReport: ImageExportReport | null = null;
 
-  static async createScormPackage(project: ScormProject, assetsHandle: FileSystemDirectoryHandle | null): Promise<Blob> {
+  static async createScormPackage(project: ScormProject, assetsHandle: FileSystemDirectoryHandle | null, rootHandle: FileSystemDirectoryHandle | null = null): Promise<Blob> {
     const zip = new JSZip();
     const title = project.courseData.title || project.project.name;
     const isPowerPointImport = project.scormConfig?.contentMode === 'ppt-import';
@@ -533,7 +663,7 @@ export class ScormPackager {
     const assetMap = new Map<string, string>();
     const captionMap = new Map<string, string>();
     const imageDiagnostics: ImageExportDiagnostic[] = [];
-    const assetFiles = new Map<string, { name: string; href: string; file: File }>();
+    const assetFiles = new Map<string, AssetFile>();
     const referencedMediaByStorageId = new Map<string, MediaItem>();
     for (const page of pages) {
       for (const media of page.media || []) {
@@ -584,7 +714,7 @@ export class ScormPackager {
               : metadataKind === 'video'
                 ? ['mp4', 'webm', 'mov', 'm4v', 'avi', 'mkv', 'bin']
                 : ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'mp3', 'wav', 'mp4', 'webm', 'bin'];
-          const scoreAsset = (asset: { name: string; href: string; file: File }) => {
+          const scoreAsset = (asset: AssetFile) => {
             const name = asset.name.toLowerCase();
             const stem = withoutExtension(name);
             const ext = normalizeExtension(getExtension(name));
@@ -768,6 +898,7 @@ export class ScormPackager {
     }
 
     const legacyExtraMediaByPageId = await packageLegacyPageImages(pages, zip, assetFiles, assetMap, imageDiagnostics);
+    const legacyExtraAudioByPageId = await packageLegacyPageAudio(pages, zip, assetFiles, assetMap);
 
     const inlineAssetHrefs: string[] = [];
     const inlineImageCache = new Map<string, string>();
@@ -783,6 +914,7 @@ export class ScormPackager {
       zip.file(captionHref, page.caption.startsWith('WEBVTT') ? page.caption : `WEBVTT\n\n${page.caption}`);
       captionMap.set(page.id, captionHref);
     }
+    await packageLegacyCaptionFiles(pages, zip, captionMap, rootHandle);
 
     zip.file('styles/main.css', buildStyles() + buildExportContentStyles() + buildThemeStyles(project.scormConfig.outputTheme || 'dark-violet'));
     zip.file('scripts/scorm-api.js', buildScormApi());
@@ -802,7 +934,10 @@ export class ScormPackager {
     zip.file('diagnostics/scorm-image-report.json', JSON.stringify(imageReport, null, 2));
 
     for (const page of pages) {
-      zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap, processedContentByPageId.get(page.id), legacyExtraMediaByPageId.get(page.id) || []));
+      zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap, processedContentByPageId.get(page.id), [
+        ...(legacyExtraMediaByPageId.get(page.id) || []),
+        ...(legacyExtraAudioByPageId.get(page.id) || []),
+      ]));
     }
     zip.file('pages/assessment.html', renderAssessment(project));
 

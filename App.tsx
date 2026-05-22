@@ -533,7 +533,7 @@ const App: React.FC = () => {
     if (!context) return;
     setIsExporting(true);
     try {
-      const zipBlob = await ScormPackager.createScormPackage(context.projectData, context.assetsHandle);
+      const zipBlob = await ScormPackager.createScormPackage(context.projectData, context.assetsHandle, context.rootHandle);
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
