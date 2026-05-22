@@ -62,6 +62,28 @@ const extensionFromMimeType = (mimeType = '') => {
   };
   return map[normalized] || normalizeExtension(normalized.split('/')[1] || '');
 };
+const mimeTypeFromExtension = (fileName = '') => {
+  const ext = normalizeExtension(getExtension(fileName));
+  const map: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+    avif: 'image/avif',
+    bmp: 'image/bmp',
+    tif: 'image/tiff',
+    tiff: 'image/tiff',
+    mp3: 'audio/mpeg',
+    wav: 'audio/wav',
+    webm: 'video/webm',
+    m4a: 'audio/mp4',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+  };
+  return map[ext] || '';
+};
 const getPackageFileName = (storageId: string, originalName: string, mimeType = '', forcedExtension?: string) => {
   const ext = forcedExtension || extensionFromMimeType(mimeType) || normalizeExtension(getExtension(originalName)) || 'bin';
   return `${safeId(storageId || withoutExtension(originalName))}.${ext}`;
@@ -78,8 +100,29 @@ const summarizeSource = (value = '') =>
 const webSafeImageExtensions = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg']);
 const riskyImageExtensions = new Set(['webp', 'avif', 'bmp', 'dib', 'tif', 'tiff', 'jfif', 'pjpeg', 'pjp', 'heic', 'heif']);
 
-const getMediaExtension = (fileName = '', mimeType = '') =>
-  normalizeExtension(getExtension(fileName)) || extensionFromMimeType(mimeType);
+const getMediaExtension = (fileName = '', mimeType = '') => {
+  const ext = normalizeExtension(getExtension(fileName));
+  if (ext && ext !== 'bin') return ext;
+  return extensionFromMimeType(mimeType) || ext;
+};
+
+const withMimeType = (file: File, mimeType = '', name = file.name) => {
+  const normalized = mimeType.toLowerCase().split(';')[0].trim();
+  if (!normalized || file.type === normalized) return file;
+  return new File([file], name, { type: normalized });
+};
+
+const sniffImageMimeType = async (file: File) => {
+  const bytes = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const ascii = String.fromCharCode(...bytes);
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (ascii.startsWith('GIF87a') || ascii.startsWith('GIF89a')) return 'image/gif';
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp';
+  if (bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp';
+  if (ascii.slice(4, 12) === 'ftypavif' || ascii.slice(4, 12) === 'ftypavis') return 'image/avif';
+  return '';
+};
 
 const isImageAsset = (metadata: any, file: File) => {
   const mimeType = String(metadata?.mimeType || file.type || '').toLowerCase();
@@ -171,7 +214,8 @@ const packageInlineContentImages = async (
   zip: JSZip,
   inlineAssetHrefs: string[],
   inlineImageCache: Map<string, string>,
-  imageDiagnostics: ImageExportDiagnostic[]
+  imageDiagnostics: ImageExportDiagnostic[],
+  assetFiles: Map<string, { name: string; href: string; file: File }>
 ) => {
   if (!page.content?.includes('<img')) return page.content || '';
 
@@ -181,7 +225,7 @@ const packageInlineContentImages = async (
 
   for (const [index, image] of images.entries()) {
     const src = image.getAttribute('src') || '';
-    if (!src || /^(media\/|\.\/media\/|\.\.\/media\/)/i.test(src)) continue;
+    if (!src) continue;
 
     const cachedHref = inlineImageCache.get(src);
     if (cachedHref) {
@@ -194,9 +238,13 @@ const packageInlineContentImages = async (
     }
 
     const storageId = `inline-${safeId(page.id)}-${index + 1}`;
-    const sourceName = getFileNameFromUrl(src) || `${storageId}.png`;
-    const urlFile = await fetchInlineImageFile(src, sourceName);
-    if (!urlFile) {
+    const localMediaName = src.replace(/^(\.\/|\.\.\/)?media\//i, '');
+    const localAsset = localMediaName !== src
+      ? assetFiles.get(localMediaName) || assetFiles.get(localMediaName.toLowerCase())
+      : null;
+    const sourceName = localAsset?.name || getFileNameFromUrl(src) || `${storageId}.png`;
+    const sourceFile = localAsset?.file || await fetchInlineImageFile(src, sourceName);
+    if (!sourceFile) {
       image.setAttribute('referrerpolicy', 'no-referrer');
       imageDiagnostics.push({
         pageId: page.id,
@@ -209,11 +257,12 @@ const packageInlineContentImages = async (
       continue;
     }
 
-    let packageFile = urlFile;
-    let packageMimeType = urlFile.type;
+    const sourceMimeType = sourceFile.type || mimeTypeFromExtension(sourceFile.name) || await sniffImageMimeType(sourceFile);
+    let packageFile = withMimeType(sourceFile, sourceMimeType, sourceFile.name);
+    let packageMimeType = packageFile.type;
     let forcedExtension: string | undefined;
-    if (shouldConvertImageForScorm({}, urlFile)) {
-      const converted = await convertImageToPng(urlFile);
+    if (shouldConvertImageForScorm({}, packageFile)) {
+      const converted = await convertImageToPng(packageFile);
       if (converted) {
         packageFile = converted;
         packageMimeType = 'image/png';
@@ -221,7 +270,7 @@ const packageInlineContentImages = async (
       }
     }
 
-    const packagedName = getPackageFileName(storageId, urlFile.name, packageMimeType, forcedExtension);
+    const packagedName = getPackageFileName(storageId, sourceFile.name, packageMimeType, forcedExtension);
     const packagedHref = `media/${packagedName}`;
     zip.file(packagedHref, packageFile);
     inlineAssetHrefs.push(packagedHref);
@@ -237,8 +286,8 @@ const packageInlineContentImages = async (
       context: 'inline-content',
       storageId,
       source: summarizeSource(src),
-      originalName: urlFile.name,
-      originalMimeType: urlFile.type,
+      originalName: sourceFile.name,
+      originalMimeType: packageFile.type || sourceFile.type,
       packagedHref,
       convertedToPng: forcedExtension === 'png',
       status: 'packaged',
@@ -390,6 +439,7 @@ export class ScormPackager {
     const assetMap = new Map<string, string>();
     const captionMap = new Map<string, string>();
     const imageDiagnostics: ImageExportDiagnostic[] = [];
+    const assetFiles = new Map<string, { name: string; href: string; file: File }>();
     const referencedMediaByStorageId = new Map<string, MediaItem>();
     for (const page of pages) {
       for (const media of page.media || []) {
@@ -401,7 +451,6 @@ export class ScormPackager {
 
     if (assetsHandle) {
       try {
-        const assetFiles = new Map<string, { name: string; href: string; file: File }>();
         const metadataFiles = new Map<string, File>();
 
         // @ts-ignore browser File System Access API async iterator
@@ -415,13 +464,8 @@ export class ScormPackager {
           }
 
           const href = `media/${entry.name}`;
-          zip.file(href, file);
           assetFiles.set(entry.name, { name: entry.name, href, file });
           assetFiles.set(lowerName, { name: entry.name, href, file });
-
-          const storageId = withoutExtension(entry.name);
-          assetMap.set(storageId, href);
-          assetMap.set(storageId.toLowerCase(), href);
         }
 
         const findAssetByMetadata = (metadata: any, metadataStem: string) => {
@@ -435,6 +479,34 @@ export class ScormPackager {
             metadata?.filename,
             metadata?.name,
           ].filter(Boolean).map((value: string) => String(value));
+          const uniqueAssets = Array.from(
+            new Map(Array.from(assetFiles.values()).map(asset => [asset.href, asset])).values()
+          );
+          const metadataKind = getMediaKind(metadata);
+          const preferredExtensions = metadataKind === 'image'
+            ? ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'bin']
+            : metadataKind === 'audio'
+              ? ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'webm', 'bin']
+              : metadataKind === 'video'
+                ? ['mp4', 'webm', 'mov', 'm4v', 'avi', 'mkv', 'bin']
+                : ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'mp3', 'wav', 'mp4', 'webm', 'bin'];
+          const scoreAsset = (asset: { name: string; href: string; file: File }) => {
+            const name = asset.name.toLowerCase();
+            const stem = withoutExtension(name);
+            const ext = normalizeExtension(getExtension(name));
+            let score = 0;
+            for (const candidate of candidates) {
+              const candidateLower = candidate.toLowerCase();
+              const candidateStem = withoutExtension(candidateLower);
+              if (name === candidateLower) score += 100;
+              if (stem === candidateStem) score += 80;
+              else if (stem.startsWith(candidateStem) || candidateStem.startsWith(stem)) score += 30;
+            }
+            const extensionRank = preferredExtensions.indexOf(ext);
+            if (extensionRank >= 0) score += preferredExtensions.length - extensionRank;
+            if (ext === 'bin') score -= 20;
+            return score;
+          };
 
           for (const candidate of candidates) {
             const lower = candidate.toLowerCase();
@@ -446,17 +518,10 @@ export class ScormPackager {
             if (byStem) return byStem;
           }
 
-          for (const candidate of candidates) {
-            const stem = withoutExtension(candidate).toLowerCase();
-            for (const [name, asset] of assetFiles.entries()) {
-              const fileStem = withoutExtension(name).toLowerCase();
-              if (fileStem === stem || fileStem.startsWith(stem) || stem.startsWith(fileStem)) {
-                return asset;
-              }
-            }
-          }
-
-          return null;
+          return uniqueAssets
+            .map(asset => ({ asset, score: scoreAsset(asset) }))
+            .filter(item => item.score > 0)
+            .sort((a, b) => b.score - a.score)[0]?.asset || null;
         };
 
         for (const [metadataStem, metadataFile] of metadataFiles.entries()) {
@@ -470,14 +535,19 @@ export class ScormPackager {
               metadata?.id,
               metadataStem,
             ].filter(Boolean).map((value: string) => String(value));
+            const referencedStorageId = storageIds.find(storageId =>
+              referencedMediaByStorageId.has(storageId) || referencedMediaByStorageId.has(storageId.toLowerCase())
+            );
+            if (!referencedStorageId) continue;
 
-            const primaryStorageId = storageIds[0] || metadataStem;
-            let packageFile = asset.file;
-            let packageMimeType = metadata?.mimeType || asset.file.type;
+            const primaryStorageId = referencedStorageId || storageIds[0] || metadataStem;
+            const explicitMimeType = metadata?.mimeType || asset.file.type || mimeTypeFromExtension(asset.name) || (getMediaKind(metadata) === 'image' ? await sniffImageMimeType(asset.file) : '');
+            let packageFile = withMimeType(asset.file, explicitMimeType, asset.name);
+            let packageMimeType = explicitMimeType || packageFile.type;
             let forcedExtension: string | undefined;
 
-            if (shouldConvertImageForScorm(metadata, asset.file)) {
-              const converted = await convertImageToPng(asset.file);
+            if (shouldConvertImageForScorm(metadata, packageFile)) {
+              const converted = await convertImageToPng(packageFile);
               if (converted) {
                 packageFile = converted;
                 packageMimeType = 'image/png';
@@ -521,13 +591,13 @@ export class ScormPackager {
           if (!referencedMedia || (currentHref && currentHref !== asset.href)) continue;
 
           const isReferencedImage = getMediaKind(referencedMedia) === 'image' || isImageAsset({}, asset.file);
-          if (!isReferencedImage) continue;
 
-          let packageFile = asset.file;
-          let packageMimeType = asset.file.type;
+          const explicitMimeType = asset.file.type || mimeTypeFromExtension(asset.name) || (getMediaKind(referencedMedia) === 'image' ? await sniffImageMimeType(asset.file) : '');
+          let packageFile = withMimeType(asset.file, explicitMimeType, asset.name);
+          let packageMimeType = explicitMimeType || packageFile.type;
           let forcedExtension: string | undefined;
-          if (shouldConvertImageForScorm({}, asset.file)) {
-            const converted = await convertImageToPng(asset.file);
+          if (shouldConvertImageForScorm({}, packageFile)) {
+            const converted = await convertImageToPng(packageFile);
             if (converted) {
               packageFile = converted;
               packageMimeType = 'image/png';
@@ -540,16 +610,18 @@ export class ScormPackager {
           zip.file(packagedHref, packageFile);
           assetMap.set(storageId, packagedHref);
           assetMap.set(storageIdLower, packagedHref);
-          imageDiagnostics.push({
-            context: 'media-asset',
-            storageId,
-            source: asset.href,
-            originalName: asset.name,
-            originalMimeType: asset.file.type,
-            packagedHref,
-            convertedToPng: forcedExtension === 'png',
-            status: 'packaged',
-          });
+          if (isReferencedImage) {
+            imageDiagnostics.push({
+              context: 'media-asset',
+              storageId,
+              source: asset.href,
+              originalName: asset.name,
+              originalMimeType: packageFile.type || asset.file.type,
+              packagedHref,
+              convertedToPng: forcedExtension === 'png',
+              status: 'packaged',
+            });
+          }
         }
       } catch (error) {
         console.warn('Unable to include linked assets in package.', error);
@@ -605,7 +677,7 @@ export class ScormPackager {
     const inlineImageCache = new Map<string, string>();
     const processedContentByPageId = new Map<string, string>();
     for (const page of pages) {
-      processedContentByPageId.set(page.id, await packageInlineContentImages(page, zip, inlineAssetHrefs, inlineImageCache, imageDiagnostics));
+      processedContentByPageId.set(page.id, await packageInlineContentImages(page, zip, inlineAssetHrefs, inlineImageCache, imageDiagnostics, assetFiles));
     }
 
     for (const page of pages) {
