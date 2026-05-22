@@ -163,6 +163,7 @@ const App: React.FC = () => {
 
          for (const { pHandle, pData } of projectFiles) {
              let aHandle: FileSystemDirectoryHandle | null = null;
+             let projectRootHandle: FileSystemDirectoryHandle | null = dirHandle;
              const projectStem = pHandle.name.replace(/\.scormproj$/i, '').toLowerCase();
 
              // Look for a directory literally named `projectName_assets` or exactly matching the project stem
@@ -172,6 +173,7 @@ const App: React.FC = () => {
              });
 
              if (matchingDir) {
+                 projectRootHandle = matchingDir;
                  // @ts-ignore
                  for await (const subEntry of matchingDir.values()) {
                      if (subEntry.kind === 'directory') {
@@ -205,7 +207,7 @@ const App: React.FC = () => {
 
               const alreadyDiscovered = await Promise.all(discovered.map(item => item.projectHandle.isSameEntry?.(pHandle)));
               if (!alreadyDiscovered.some(Boolean)) {
-                  discovered.push({ projectHandle: pHandle, projectData: pData, assetsHandle: aHandle });
+                  discovered.push({ projectHandle: pHandle, projectData: pData, assetsHandle: aHandle, projectRootHandle });
               }
          }
 
@@ -235,14 +237,15 @@ const App: React.FC = () => {
   };
 
   const loadProject = (proj: DiscoveredProject, rootH: FileSystemDirectoryHandle, sandbox: boolean) => {
+      const projectRootHandle = proj.projectRootHandle || rootH;
       setContext({
           projectData: proj.projectData,
           projectHandle: proj.projectHandle,
           assetsHandle: proj.assetsHandle,
-          rootHandle: rootH,
+          rootHandle: projectRootHandle,
           isSandbox: sandbox
       });
-      loadPronunciationConfig(rootH, sandbox);
+      loadPronunciationConfig(projectRootHandle, sandbox);
       setView(isPowerPointProject(proj.projectData) && proj.projectData.courseContent.topics[0]
         ? { type: 'topic-edit', id: proj.projectData.courseContent.topics[0].id }
         : 'welcome');

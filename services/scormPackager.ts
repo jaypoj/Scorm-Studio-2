@@ -38,6 +38,10 @@ const getStemNumber = (value: string, prefix: string) => {
   const match = withoutExtension(value).match(new RegExp(`^${prefix}-(\\d+)$`, 'i'));
   return match ? Number(match[1]) : null;
 };
+const getLeadingNumber = (value: string) => {
+  const match = value.match(/^(\d+)(?:\D|$)/);
+  return match ? Number(match[1]) : null;
+};
 const normalizeExtension = (value: string) => {
   const ext = value.toLowerCase().replace(/^\./, '');
   if (ext === 'jpeg' || ext === 'jfif' || ext === 'pjpeg' || ext === 'pjp') return 'jpg';
@@ -498,19 +502,22 @@ const packageLegacyCaptionFiles = async (
   rootHandle: FileSystemDirectoryHandle | null
 ) => {
   const captionFiles = await readLegacyCaptionFiles(rootHandle);
+  const byLeadingNumber = new Map<number, CaptionFile>();
+  const byCaptionNumber = new Map<number, CaptionFile>();
+  for (const captionFile of captionFiles) {
+    const leading = getLeadingNumber(captionFile.name);
+    if (leading !== null && !byLeadingNumber.has(leading)) byLeadingNumber.set(leading, captionFile);
+    const captionNumber = getStemNumber(captionFile.name, 'caption');
+    if (captionNumber !== null && !byCaptionNumber.has(captionNumber)) byCaptionNumber.set(captionNumber, captionFile);
+  }
+
   for (const [pageIndex, page] of pages.entries()) {
     if (captionMap.has(page.id)) continue;
 
-    const numberedCandidates = [
-      `caption-${pageIndex}`,
-      `caption-${pageIndex + 1}`,
-      `${String(pageIndex + 1).padStart(4, '0')}-`,
-      `${String(pageIndex).padStart(4, '0')}-`,
-    ];
-    const captionFile = captionFiles.find(item => {
-      const lower = item.name.toLowerCase();
-      return numberedCandidates.some(candidate => lower.startsWith(candidate.toLowerCase()));
-    }) || captionFiles[pageIndex];
+    const captionFile = byLeadingNumber.get(pageIndex + 1)
+      || byCaptionNumber.get(pageIndex)
+      || byCaptionNumber.get(pageIndex + 1)
+      || captionFiles[pageIndex];
     if (!captionFile) continue;
 
     const captionHref = `media/caption-${safeId(page.id)}.vtt`;

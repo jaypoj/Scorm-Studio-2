@@ -166,6 +166,7 @@ export interface DiscoveredProject {
   projectHandle: FileSystemFileHandle;
   projectData: ScormProject;
   assetsHandle: FileSystemDirectoryHandle | null;
+  projectRootHandle?: FileSystemDirectoryHandle | null;
 }
 
 export type ViewState = 
