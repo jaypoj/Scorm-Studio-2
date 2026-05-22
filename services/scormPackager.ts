@@ -4,7 +4,7 @@ import { FileSystemDirectoryHandle, MediaItem, Question, ScormProject, Topic, We
 type Page = Topic | WelcomePage | LearningObjectivesPage;
 type ImageExportDiagnostic = {
   pageId?: string;
-  context: 'media-asset' | 'external-media' | 'inline-content';
+  context: 'media-asset' | 'external-media' | 'inline-content' | 'legacy-page-image';
   storageId?: string;
   source?: string;
   originalName?: string;
@@ -297,6 +297,99 @@ const packageInlineContentImages = async (
   return template.innerHTML;
 };
 
+const getLegacyImageStemsForPage = (page: Page, pageIndex: number) => {
+  const stems = new Set<string>();
+  const topicMatch = page.id.match(/^topic-(\d+)$/i);
+  if (topicMatch) stems.add(`image-${topicMatch[1]}`);
+  stems.add(`image-${safeId(page.id)}`);
+  stems.add(`image-${pageIndex}`);
+  return Array.from(stems);
+};
+
+const chooseLegacyImageAsset = (
+  assetFiles: Map<string, { name: string; href: string; file: File }>,
+  stem: string
+) => {
+  const uniqueAssets = Array.from(
+    new Map(Array.from(assetFiles.values()).map(asset => [asset.href, asset])).values()
+  );
+  const extensionPreference = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'bin'];
+  const candidates = uniqueAssets.filter(asset => withoutExtension(asset.name).toLowerCase() === stem.toLowerCase());
+  return candidates
+    .map(asset => {
+      const ext = normalizeExtension(getExtension(asset.name));
+      const rank = extensionPreference.indexOf(ext);
+      return {
+        asset,
+        score: rank >= 0 ? extensionPreference.length - rank : 0,
+      };
+    })
+    .sort((a, b) => b.score - a.score)[0]?.asset || null;
+};
+
+const packageLegacyPageImages = async (
+  pages: Page[],
+  zip: JSZip,
+  assetFiles: Map<string, { name: string; href: string; file: File }>,
+  assetMap: Map<string, string>,
+  imageDiagnostics: ImageExportDiagnostic[]
+) => {
+  const extraMediaByPageId = new Map<string, MediaItem[]>();
+
+  for (const [pageIndex, page] of pages.entries()) {
+    for (const stem of getLegacyImageStemsForPage(page, pageIndex)) {
+      const alreadyAttached = (page.media || []).some(media => media.storageId?.toLowerCase() === stem.toLowerCase());
+      const alreadyInContent = new RegExp(`media/${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(page.content || '');
+      const alreadyMapped = assetMap.has(stem) || assetMap.has(stem.toLowerCase());
+      if (alreadyAttached || alreadyInContent || alreadyMapped) continue;
+
+      const asset = chooseLegacyImageAsset(assetFiles, stem);
+      if (!asset) continue;
+
+      const explicitMimeType = asset.file.type || mimeTypeFromExtension(asset.name) || await sniffImageMimeType(asset.file);
+      let packageFile = withMimeType(asset.file, explicitMimeType, asset.name);
+      let packageMimeType = explicitMimeType || packageFile.type;
+      let forcedExtension: string | undefined;
+      if (shouldConvertImageForScorm({ type: 'image' }, packageFile)) {
+        const converted = await convertImageToPng(packageFile);
+        if (converted) {
+          packageFile = converted;
+          packageMimeType = 'image/png';
+          forcedExtension = 'png';
+        }
+      }
+
+      const packagedName = getPackageFileName(stem, asset.name, packageMimeType, forcedExtension);
+      const packagedHref = `media/${packagedName}`;
+      zip.file(packagedHref, packageFile);
+      assetMap.set(stem, packagedHref);
+      assetMap.set(stem.toLowerCase(), packagedHref);
+
+      const extraMedia: MediaItem = {
+        id: `legacy-${page.id}-${stem}`,
+        storageId: stem,
+        type: 'image',
+        title: stem,
+        source: 'legacy-page-image',
+      };
+      extraMediaByPageId.set(page.id, [...(extraMediaByPageId.get(page.id) || []), extraMedia]);
+      imageDiagnostics.push({
+        pageId: page.id,
+        context: 'legacy-page-image',
+        storageId: stem,
+        source: asset.href,
+        originalName: asset.name,
+        originalMimeType: packageFile.type || asset.file.type,
+        packagedHref,
+        convertedToPng: forcedExtension === 'png',
+        status: 'packaged',
+      });
+    }
+  }
+
+  return extraMediaByPageId;
+};
+
 const renderQuestion = (question: Question, index: number, prefix: string) => {
   const name = `${prefix}-q-${index}`;
   const options = question.type === 'true-false'
@@ -334,9 +427,10 @@ const renderAssessment = (project: ScormProject) => {
   </section>`;
 };
 
-const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>) => {
-  const visual = (page.media || []).filter(media => !media.candidate && ['image', 'video'].includes(getMediaKind(media)));
-  const audio = (page.media || []).find(media => getMediaKind(media) === 'audio');
+const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>, extraMedia: MediaItem[] = []) => {
+  const mediaItems = [...(page.media || []), ...extraMedia];
+  const visual = mediaItems.filter(media => !media.candidate && ['image', 'video'].includes(getMediaKind(media)));
+  const audio = mediaItems.find(media => getMediaKind(media) === 'audio');
   const visualHtml = visual.map(media => {
     const kind = getMediaKind(media);
     const src = getAssetSrc(assetMap, media);
@@ -369,8 +463,8 @@ const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: M
   </section>`;
 };
 
-const renderPage = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>, content = page.content || '') => {
-  const media = renderTopMedia(page, assetMap, captionMap);
+const renderPage = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>, content = page.content || '', extraMedia: MediaItem[] = []) => {
+  const media = renderTopMedia(page, assetMap, captionMap, extraMedia);
   return `<div class="content-wrapper">
     <section class="page-card">
       <div class="page-header"><h2>${escapeHtml(page.title)}</h2></div>
@@ -673,6 +767,8 @@ export class ScormPackager {
       });
     }
 
+    const legacyExtraMediaByPageId = await packageLegacyPageImages(pages, zip, assetFiles, assetMap, imageDiagnostics);
+
     const inlineAssetHrefs: string[] = [];
     const inlineImageCache = new Map<string, string>();
     const processedContentByPageId = new Map<string, string>();
@@ -706,7 +802,7 @@ export class ScormPackager {
     zip.file('diagnostics/scorm-image-report.json', JSON.stringify(imageReport, null, 2));
 
     for (const page of pages) {
-      zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap, processedContentByPageId.get(page.id)));
+      zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap, processedContentByPageId.get(page.id), legacyExtraMediaByPageId.get(page.id) || []));
     }
     zip.file('pages/assessment.html', renderAssessment(project));
 
