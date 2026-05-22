@@ -542,6 +542,10 @@ const App: React.FC = () => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      const unresolvedImages = ScormPackager.lastImageReport?.summary.unresolved || 0;
+      if (unresolvedImages > 0) {
+        alert(`SCORM package exported, but ${unresolvedImages} image${unresolvedImages === 1 ? '' : 's'} could not be packaged. Open diagnostics/scorm-image-report.json inside the zip to see the exact source and file type details.`);
+      }
     } catch (e) {
       console.error(e);
       alert("Failed to export SCORM package.");

@@ -382,8 +382,13 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({ value, onChange,
               isOpen={isMediaSearchOpen}
               onClose={() => setIsMediaSearchOpen(false)}
               settings={aiSettings}
-              onInsertImage={(url, alt) => {
-                  const imgHtml = `<img src="${url}" alt="${alt}" style="max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; display: block;" />`;
+              onInsertImage={async (url, alt) => {
+                  if (onPasteImageUrl) {
+                    await onPasteImageUrl(url);
+                    setIsMediaSearchOpen(false);
+                    return;
+                  }
+                  const imgHtml = `<img src="${url}" alt="${alt}" referrerpolicy="no-referrer" style="max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; display: block;" />`;
                   insertAtCursor(imgHtml);
               }}
               onInsertVideo={(video, startTime, endTime) => {

@@ -2,6 +2,28 @@ import JSZip from 'jszip';
 import { FileSystemDirectoryHandle, MediaItem, Question, ScormProject, Topic, WelcomePage, LearningObjectivesPage } from '../types';
 
 type Page = Topic | WelcomePage | LearningObjectivesPage;
+type ImageExportDiagnostic = {
+  pageId?: string;
+  context: 'media-asset' | 'external-media' | 'inline-content';
+  storageId?: string;
+  source?: string;
+  originalName?: string;
+  originalMimeType?: string;
+  packagedHref?: string;
+  convertedToPng?: boolean;
+  status: 'packaged' | 'unresolved';
+  reason?: string;
+};
+type ImageExportReport = {
+  generatedAt: string;
+  summary: {
+    total: number;
+    packaged: number;
+    unresolved: number;
+    convertedToPng: number;
+  };
+  images: ImageExportDiagnostic[];
+};
 
 const escapeXml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[ch]!));
 const escapeHtml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch]!));
@@ -49,6 +71,9 @@ const getAssetSrc = (assetMap: Map<string, string>, media: MediaItem) =>
   assetMap.get(media.storageId?.toLowerCase?.() || '') ||
   media.url ||
   '';
+
+const summarizeSource = (value = '') =>
+  value.length > 260 ? `${value.slice(0, 220)}...${value.slice(-24)}` : value;
 
 const webSafeImageExtensions = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg']);
 const riskyImageExtensions = new Set(['webp', 'avif', 'bmp', 'dib', 'tif', 'tiff', 'jfif', 'pjpeg', 'pjp', 'heic', 'heif']);
@@ -145,7 +170,8 @@ const packageInlineContentImages = async (
   page: Page,
   zip: JSZip,
   inlineAssetHrefs: string[],
-  inlineImageCache: Map<string, string>
+  inlineImageCache: Map<string, string>,
+  imageDiagnostics: ImageExportDiagnostic[]
 ) => {
   if (!page.content?.includes('<img')) return page.content || '';
 
@@ -170,7 +196,18 @@ const packageInlineContentImages = async (
     const storageId = `inline-${safeId(page.id)}-${index + 1}`;
     const sourceName = getFileNameFromUrl(src) || `${storageId}.png`;
     const urlFile = await fetchInlineImageFile(src, sourceName);
-    if (!urlFile) continue;
+    if (!urlFile) {
+      image.setAttribute('referrerpolicy', 'no-referrer');
+      imageDiagnostics.push({
+        pageId: page.id,
+        context: 'inline-content',
+        storageId,
+        source: summarizeSource(src),
+        status: 'unresolved',
+        reason: 'The image was embedded as an inline/external URL but could not be fetched into the SCORM package. If it is a blob URL, it likely expired after browser refresh. If it is an external URL, the host may block browser downloads.',
+      });
+      continue;
+    }
 
     let packageFile = urlFile;
     let packageMimeType = urlFile.type;
@@ -195,6 +232,17 @@ const packageInlineContentImages = async (
     image.removeAttribute('data-src');
     image.removeAttribute('data-original');
     image.setAttribute('referrerpolicy', 'no-referrer');
+    imageDiagnostics.push({
+      pageId: page.id,
+      context: 'inline-content',
+      storageId,
+      source: summarizeSource(src),
+      originalName: urlFile.name,
+      originalMimeType: urlFile.type,
+      packagedHref,
+      convertedToPng: forcedExtension === 'png',
+      status: 'packaged',
+    });
   }
 
   return template.innerHTML;
@@ -329,6 +377,8 @@ document.addEventListener('DOMContentLoaded',()=>{el('prev-button').onclick=prev
 `;
 
 export class ScormPackager {
+  static lastImageReport: ImageExportReport | null = null;
+
   static async createScormPackage(project: ScormProject, assetsHandle: FileSystemDirectoryHandle | null): Promise<Blob> {
     const zip = new JSZip();
     const title = project.courseData.title || project.project.name;
@@ -339,6 +389,7 @@ export class ScormPackager {
     const pageEntries = [...pages.map(page => ({ id: safeId(page.id), title: page.title })), { id: 'assessment', title: 'Assessment' }];
     const assetMap = new Map<string, string>();
     const captionMap = new Map<string, string>();
+    const imageDiagnostics: ImageExportDiagnostic[] = [];
     const referencedMediaByStorageId = new Map<string, MediaItem>();
     for (const page of pages) {
       for (const media of page.media || []) {
@@ -437,6 +488,18 @@ export class ScormPackager {
             const packagedName = getPackageFileName(primaryStorageId, asset.name, packageMimeType, forcedExtension);
             const packagedHref = `media/${packagedName}`;
             zip.file(packagedHref, packageFile);
+            if (isImageAsset(metadata, asset.file)) {
+              imageDiagnostics.push({
+                context: 'media-asset',
+                storageId: primaryStorageId,
+                source: asset.href,
+                originalName: asset.name,
+                originalMimeType: metadata?.mimeType || asset.file.type,
+                packagedHref,
+                convertedToPng: forcedExtension === 'png',
+                status: 'packaged',
+              });
+            }
 
             for (const storageId of storageIds) {
               assetMap.set(storageId, packagedHref);
@@ -477,6 +540,16 @@ export class ScormPackager {
           zip.file(packagedHref, packageFile);
           assetMap.set(storageId, packagedHref);
           assetMap.set(storageIdLower, packagedHref);
+          imageDiagnostics.push({
+            context: 'media-asset',
+            storageId,
+            source: asset.href,
+            originalName: asset.name,
+            originalMimeType: asset.file.type,
+            packagedHref,
+            convertedToPng: forcedExtension === 'png',
+            status: 'packaged',
+          });
         }
       } catch (error) {
         console.warn('Unable to include linked assets in package.', error);
@@ -488,7 +561,16 @@ export class ScormPackager {
       if (assetMap.has(media.storageId) || assetMap.has(media.storageId.toLowerCase())) continue;
 
       const urlFile = await getImageFileFromUrl(media);
-      if (!urlFile) continue;
+      if (!urlFile) {
+        imageDiagnostics.push({
+          context: 'external-media',
+          storageId: media.storageId,
+          source: summarizeSource(media.url || ''),
+          status: 'unresolved',
+          reason: 'The media item points to an external/blob URL that could not be fetched into the SCORM package.',
+        });
+        continue;
+      }
 
       let packageFile = urlFile;
       let packageMimeType = urlFile.type;
@@ -507,13 +589,23 @@ export class ScormPackager {
       zip.file(packagedHref, packageFile);
       assetMap.set(media.storageId, packagedHref);
       assetMap.set(media.storageId.toLowerCase(), packagedHref);
+      imageDiagnostics.push({
+        context: 'external-media',
+        storageId: media.storageId,
+        source: summarizeSource(media.url || ''),
+        originalName: urlFile.name,
+        originalMimeType: urlFile.type,
+        packagedHref,
+        convertedToPng: forcedExtension === 'png',
+        status: 'packaged',
+      });
     }
 
     const inlineAssetHrefs: string[] = [];
     const inlineImageCache = new Map<string, string>();
     const processedContentByPageId = new Map<string, string>();
     for (const page of pages) {
-      processedContentByPageId.set(page.id, await packageInlineContentImages(page, zip, inlineAssetHrefs, inlineImageCache));
+      processedContentByPageId.set(page.id, await packageInlineContentImages(page, zip, inlineAssetHrefs, inlineImageCache, imageDiagnostics));
     }
 
     for (const page of pages) {
@@ -528,6 +620,18 @@ export class ScormPackager {
     zip.file('scripts/scorm-api.js', buildScormApi());
     zip.file('scripts/navigation.js', buildNavigation(pageEntries, project.courseContent.assessment.passMark || 80, project.scormConfig));
     zip.file('project.json', JSON.stringify(project, null, 2));
+    const imageReport: ImageExportReport = {
+      generatedAt: new Date().toISOString(),
+      summary: {
+        total: imageDiagnostics.length,
+        packaged: imageDiagnostics.filter(item => item.status === 'packaged').length,
+        unresolved: imageDiagnostics.filter(item => item.status === 'unresolved').length,
+        convertedToPng: imageDiagnostics.filter(item => item.convertedToPng).length,
+      },
+      images: imageDiagnostics,
+    };
+    ScormPackager.lastImageReport = imageReport;
+    zip.file('diagnostics/scorm-image-report.json', JSON.stringify(imageReport, null, 2));
 
     for (const page of pages) {
       zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap, processedContentByPageId.get(page.id)));
@@ -542,6 +646,7 @@ export class ScormPackager {
       'scripts/scorm-api.js',
       'scripts/navigation.js',
       'project.json',
+      'diagnostics/scorm-image-report.json',
       ...pageEntries.map(page => `pages/${page.id}.html`),
       ...Array.from(assetMap.values()),
       ...inlineAssetHrefs,
