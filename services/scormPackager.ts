@@ -40,8 +40,8 @@ const extensionFromMimeType = (mimeType = '') => {
   };
   return map[normalized] || normalizeExtension(normalized.split('/')[1] || '');
 };
-const getPackageFileName = (storageId: string, originalName: string, mimeType = '') => {
-  const ext = extensionFromMimeType(mimeType) || normalizeExtension(getExtension(originalName)) || 'bin';
+const getPackageFileName = (storageId: string, originalName: string, mimeType = '', forcedExtension?: string) => {
+  const ext = forcedExtension || extensionFromMimeType(mimeType) || normalizeExtension(getExtension(originalName)) || 'bin';
   return `${safeId(storageId || withoutExtension(originalName))}.${ext}`;
 };
 const getAssetSrc = (assetMap: Map<string, string>, media: MediaItem) =>
@@ -49,6 +49,156 @@ const getAssetSrc = (assetMap: Map<string, string>, media: MediaItem) =>
   assetMap.get(media.storageId?.toLowerCase?.() || '') ||
   media.url ||
   '';
+
+const webSafeImageExtensions = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg']);
+const riskyImageExtensions = new Set(['webp', 'avif', 'bmp', 'dib', 'tif', 'tiff', 'jfif', 'pjpeg', 'pjp', 'heic', 'heif']);
+
+const getMediaExtension = (fileName = '', mimeType = '') =>
+  normalizeExtension(getExtension(fileName)) || extensionFromMimeType(mimeType);
+
+const isImageAsset = (metadata: any, file: File) => {
+  const mimeType = String(metadata?.mimeType || file.type || '').toLowerCase();
+  const fileName = String(metadata?.originalName || metadata?.original_name || metadata?.fileName || metadata?.filename || file.name || '');
+  const ext = getMediaExtension(fileName, mimeType);
+  return mimeType.startsWith('image/') || webSafeImageExtensions.has(ext) || riskyImageExtensions.has(ext);
+};
+
+const shouldConvertImageForScorm = (metadata: any, file: File) => {
+  const mimeType = String(metadata?.mimeType || file.type || '').toLowerCase().split(';')[0].trim();
+  const fileName = String(metadata?.originalName || metadata?.original_name || metadata?.fileName || metadata?.filename || file.name || '');
+  const ext = getMediaExtension(fileName, mimeType);
+  if (!isImageAsset(metadata, file)) return false;
+  if (mimeType === 'image/svg+xml' || ext === 'svg') return false;
+  if (mimeType === 'image/gif' || ext === 'gif') return false;
+  if (mimeType === 'image/png' || mimeType === 'image/jpeg' || ext === 'png' || ext === 'jpg' || ext === 'jpeg') return false;
+  return riskyImageExtensions.has(ext) || mimeType.startsWith('image/') || !webSafeImageExtensions.has(ext);
+};
+
+const convertImageToPng = async (file: File): Promise<File | null> => {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width || 1;
+    canvas.height = bitmap.height || 1;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      bitmap.close?.();
+      return null;
+    }
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) return null;
+    return new File([blob], `${withoutExtension(file.name || 'image')}.png`, { type: 'image/png' });
+  } catch (error) {
+    console.warn(`Unable to convert ${file.name || 'image'} to PNG for SCORM export.`, error);
+    return null;
+  }
+};
+
+const getImageFileFromUrl = async (media: MediaItem): Promise<File | null> => {
+  if (!media.url || getMediaKind(media) !== 'image') return null;
+  if (/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(media.url)) return null;
+
+  try {
+    const response = await fetch(media.url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const mimeType = blob.type || 'image/png';
+    if (!mimeType.startsWith('image/')) return null;
+    const extension = extensionFromMimeType(mimeType) || 'png';
+    return new File([blob], `${media.storageId || media.id || 'image'}.${extension}`, { type: mimeType });
+  } catch (error) {
+    console.warn(`Unable to package external image ${media.storageId || media.title || media.url}.`, error);
+    return null;
+  }
+};
+
+const getFileNameFromUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split('/').filter(Boolean).pop();
+    return name ? decodeURIComponent(name) : '';
+  } catch {
+    return '';
+  }
+};
+
+const fetchInlineImageFile = async (src: string, fallbackName: string): Promise<File | null> => {
+  if (!/^(https?:|data:image\/|blob:)/i.test(src)) return null;
+
+  try {
+    const response = await fetch(src);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const mimeType = blob.type || 'image/png';
+    if (!mimeType.startsWith('image/')) return null;
+    const extension = extensionFromMimeType(mimeType) || normalizeExtension(getExtension(fallbackName)) || 'png';
+    return new File([blob], fallbackName || `inline-image.${extension}`, { type: mimeType });
+  } catch (error) {
+    console.warn(`Unable to package inline image ${src}.`, error);
+    return null;
+  }
+};
+
+const packageInlineContentImages = async (
+  page: Page,
+  zip: JSZip,
+  inlineAssetHrefs: string[],
+  inlineImageCache: Map<string, string>
+) => {
+  if (!page.content?.includes('<img')) return page.content || '';
+
+  const template = document.createElement('template');
+  template.innerHTML = page.content;
+  const images = Array.from(template.content.querySelectorAll('img[src]'));
+
+  for (const [index, image] of images.entries()) {
+    const src = image.getAttribute('src') || '';
+    if (!src || /^(media\/|\.\/media\/|\.\.\/media\/)/i.test(src)) continue;
+
+    const cachedHref = inlineImageCache.get(src);
+    if (cachedHref) {
+      image.setAttribute('src', cachedHref);
+      image.removeAttribute('srcset');
+      image.removeAttribute('data-src');
+      image.removeAttribute('data-original');
+      image.setAttribute('referrerpolicy', 'no-referrer');
+      continue;
+    }
+
+    const storageId = `inline-${safeId(page.id)}-${index + 1}`;
+    const sourceName = getFileNameFromUrl(src) || `${storageId}.png`;
+    const urlFile = await fetchInlineImageFile(src, sourceName);
+    if (!urlFile) continue;
+
+    let packageFile = urlFile;
+    let packageMimeType = urlFile.type;
+    let forcedExtension: string | undefined;
+    if (shouldConvertImageForScorm({}, urlFile)) {
+      const converted = await convertImageToPng(urlFile);
+      if (converted) {
+        packageFile = converted;
+        packageMimeType = 'image/png';
+        forcedExtension = 'png';
+      }
+    }
+
+    const packagedName = getPackageFileName(storageId, urlFile.name, packageMimeType, forcedExtension);
+    const packagedHref = `media/${packagedName}`;
+    zip.file(packagedHref, packageFile);
+    inlineAssetHrefs.push(packagedHref);
+    inlineImageCache.set(src, packagedHref);
+
+    image.setAttribute('src', packagedHref);
+    image.removeAttribute('srcset');
+    image.removeAttribute('data-src');
+    image.removeAttribute('data-original');
+    image.setAttribute('referrerpolicy', 'no-referrer');
+  }
+
+  return template.innerHTML;
+};
 
 const renderQuestion = (question: Question, index: number, prefix: string) => {
   const name = `${prefix}-q-${index}`;
@@ -122,14 +272,14 @@ const renderTopMedia = (page: Page, assetMap: Map<string, string>, captionMap: M
   </section>`;
 };
 
-const renderPage = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>) => {
+const renderPage = (page: Page, assetMap: Map<string, string>, captionMap: Map<string, string>, content = page.content || '') => {
   const media = renderTopMedia(page, assetMap, captionMap);
   return `<div class="content-wrapper">
     <section class="page-card">
       <div class="page-header"><h2>${escapeHtml(page.title)}</h2></div>
       ${media}
       <main class="content-column">
-        <div class="topic-text">${page.content || ''}</div>
+        <div class="topic-text">${content}</div>
         ${renderKnowledgeCheck(page)}
       </main>
     </section>
@@ -140,7 +290,7 @@ const buildStyles = () => `*{box-sizing:border-box}html,body{margin:0;height:100
 
 const buildScormApi = () => `window.SCORM={api:null,initialized:false,findAPI:function(w){var tries=0;while(w&&tries<10){if(w.API)return w.API;w=w.parent;tries++}return null},init:function(){this.api=this.findAPI(window)||this.findAPI(window.opener);if(this.api&&!this.initialized){this.api.LMSInitialize('');this.initialized=true}return this.initialized},set:function(k,v){try{if(this.api)this.api.LMSSetValue(k,String(v))}catch(e){}},commit:function(){try{if(this.api)this.api.LMSCommit('')}catch(e){}},finish:function(){try{if(this.api)this.api.LMSFinish('')}catch(e){}}};window.addEventListener('load',function(){SCORM.init();SCORM.set('cmi.core.lesson_status','incomplete');SCORM.commit()});window.addEventListener('beforeunload',function(){SCORM.commit();SCORM.finish()});`;
 
-const buildExportContentStyles = () => `.topic-text ul,.topic-text ol{margin:12px 0 16px;padding-left:28px}.topic-text ul{list-style:disc}.topic-text ol{list-style:decimal}.topic-text li{margin:6px 0;padding-left:3px}.topic-text li>ul,.topic-text li>ol{margin:6px 0 6px 8px}.topic-text table{table-layout:auto;margin:16px 0 20px}.topic-text th,.topic-text td{vertical-align:top}.topic-text th{color:#fff}.topic-text tr:nth-child(even) td{background:#272231}`;
+const buildExportContentStyles = () => `.topic-text ul,.topic-text ol{margin:12px 0 16px;padding-left:28px}.topic-text ul{list-style:disc}.topic-text ol{list-style:decimal}.topic-text li{margin:6px 0;padding-left:3px}.topic-text li>ul,.topic-text li>ol{margin:6px 0 6px 8px}.topic-text table{table-layout:auto;margin:16px 0 20px}.topic-text th,.topic-text td{vertical-align:top}.topic-text th{color:#fff}.topic-text tr:nth-child(even) td{background:#272231}.topic-text img{max-width:100%;height:auto;border-radius:8px;display:block;margin:16px 0}`;
 
 const buildThemeStyles = (theme: ScormProject['scormConfig']['outputTheme']) => {
   if (theme !== 'legacy-green') return '';
@@ -189,6 +339,14 @@ export class ScormPackager {
     const pageEntries = [...pages.map(page => ({ id: safeId(page.id), title: page.title })), { id: 'assessment', title: 'Assessment' }];
     const assetMap = new Map<string, string>();
     const captionMap = new Map<string, string>();
+    const referencedMediaByStorageId = new Map<string, MediaItem>();
+    for (const page of pages) {
+      for (const media of page.media || []) {
+        if (!media.storageId) continue;
+        referencedMediaByStorageId.set(media.storageId, media);
+        referencedMediaByStorageId.set(media.storageId.toLowerCase(), media);
+      }
+    }
 
     if (assetsHandle) {
       try {
@@ -263,11 +421,22 @@ export class ScormPackager {
             ].filter(Boolean).map((value: string) => String(value));
 
             const primaryStorageId = storageIds[0] || metadataStem;
-            const packagedName = getPackageFileName(primaryStorageId, asset.name, metadata?.mimeType || asset.file.type);
-            const packagedHref = `media/${packagedName}`;
-            if (packagedHref !== asset.href) {
-              zip.file(packagedHref, asset.file);
+            let packageFile = asset.file;
+            let packageMimeType = metadata?.mimeType || asset.file.type;
+            let forcedExtension: string | undefined;
+
+            if (shouldConvertImageForScorm(metadata, asset.file)) {
+              const converted = await convertImageToPng(asset.file);
+              if (converted) {
+                packageFile = converted;
+                packageMimeType = 'image/png';
+                forcedExtension = 'png';
+              }
             }
+
+            const packagedName = getPackageFileName(primaryStorageId, asset.name, packageMimeType, forcedExtension);
+            const packagedHref = `media/${packagedName}`;
+            zip.file(packagedHref, packageFile);
 
             for (const storageId of storageIds) {
               assetMap.set(storageId, packagedHref);
@@ -277,9 +446,74 @@ export class ScormPackager {
             console.warn(`Unable to read asset metadata ${metadataStem}.json`, metadataError);
           }
         }
+
+        const uniqueAssets = Array.from(
+          new Map(Array.from(assetFiles.values()).map(asset => [asset.href, asset])).values()
+        );
+        for (const asset of uniqueAssets) {
+          const storageId = withoutExtension(asset.name);
+          const storageIdLower = storageId.toLowerCase();
+          const referencedMedia = referencedMediaByStorageId.get(storageId) || referencedMediaByStorageId.get(storageIdLower);
+          const currentHref = assetMap.get(storageId) || assetMap.get(storageIdLower);
+          if (!referencedMedia || (currentHref && currentHref !== asset.href)) continue;
+
+          const isReferencedImage = getMediaKind(referencedMedia) === 'image' || isImageAsset({}, asset.file);
+          if (!isReferencedImage) continue;
+
+          let packageFile = asset.file;
+          let packageMimeType = asset.file.type;
+          let forcedExtension: string | undefined;
+          if (shouldConvertImageForScorm({}, asset.file)) {
+            const converted = await convertImageToPng(asset.file);
+            if (converted) {
+              packageFile = converted;
+              packageMimeType = 'image/png';
+              forcedExtension = 'png';
+            }
+          }
+
+          const packagedName = getPackageFileName(storageId, asset.name, packageMimeType, forcedExtension);
+          const packagedHref = `media/${packagedName}`;
+          zip.file(packagedHref, packageFile);
+          assetMap.set(storageId, packagedHref);
+          assetMap.set(storageIdLower, packagedHref);
+        }
       } catch (error) {
         console.warn('Unable to include linked assets in package.', error);
       }
+    }
+
+    for (const media of referencedMediaByStorageId.values()) {
+      if (getMediaKind(media) !== 'image' || !media.storageId) continue;
+      if (assetMap.has(media.storageId) || assetMap.has(media.storageId.toLowerCase())) continue;
+
+      const urlFile = await getImageFileFromUrl(media);
+      if (!urlFile) continue;
+
+      let packageFile = urlFile;
+      let packageMimeType = urlFile.type;
+      let forcedExtension: string | undefined;
+      if (shouldConvertImageForScorm({}, urlFile)) {
+        const converted = await convertImageToPng(urlFile);
+        if (converted) {
+          packageFile = converted;
+          packageMimeType = 'image/png';
+          forcedExtension = 'png';
+        }
+      }
+
+      const packagedName = getPackageFileName(media.storageId, urlFile.name, packageMimeType, forcedExtension);
+      const packagedHref = `media/${packagedName}`;
+      zip.file(packagedHref, packageFile);
+      assetMap.set(media.storageId, packagedHref);
+      assetMap.set(media.storageId.toLowerCase(), packagedHref);
+    }
+
+    const inlineAssetHrefs: string[] = [];
+    const inlineImageCache = new Map<string, string>();
+    const processedContentByPageId = new Map<string, string>();
+    for (const page of pages) {
+      processedContentByPageId.set(page.id, await packageInlineContentImages(page, zip, inlineAssetHrefs, inlineImageCache));
     }
 
     for (const page of pages) {
@@ -296,13 +530,13 @@ export class ScormPackager {
     zip.file('project.json', JSON.stringify(project, null, 2));
 
     for (const page of pages) {
-      zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap));
+      zip.file(`pages/${safeId(page.id)}.html`, renderPage(page, assetMap, captionMap, processedContentByPageId.get(page.id)));
     }
     zip.file('pages/assessment.html', renderAssessment(project));
 
     zip.file('index.html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="styles/main.css"><script src="scripts/scorm-api.js"></script></head><body><nav class="sidebar"><div class="sidebar-header"><div class="course-title">${escapeHtml(title)}</div><div class="progress-wrap"><div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div><div id="progress-text" class="progress-text">0% complete</div></div></div><div class="sidebar-nav">${pageEntries.map((page, index) => `<a href="#" class="nav-item" data-index="${index}">${escapeHtml(page.id !== 'assessment' && (isPowerPointImport || index > 1) ? `${isPowerPointImport ? index + 1 : index - 1}. ${page.title}` : page.title)}</a>`).join('')}</div></nav><main class="main-area"><header class="header"><h1>${escapeHtml(title)}</h1></header><div id="content-container" class="content-container"></div><footer class="footer"><button id="prev-button" class="nav-button secondary" type="button">Previous</button><div id="gate-message" class="muted gate-message"></div><button id="next-button" class="nav-button primary" type="button">Next</button></footer></main><script src="scripts/navigation.js"></script></body></html>`);
 
-    const fileList = [
+    const fileList = Array.from(new Set([
       'index.html',
       'styles/main.css',
       'scripts/scorm-api.js',
@@ -310,8 +544,9 @@ export class ScormPackager {
       'project.json',
       ...pageEntries.map(page => `pages/${page.id}.html`),
       ...Array.from(assetMap.values()),
+      ...inlineAssetHrefs,
       ...Array.from(captionMap.values()),
-    ];
+    ]));
 
     zip.file('imsmanifest.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <manifest identifier="${escapeXml(project.project.id)}" version="1.0" xmlns="http://www.imsproject.org/xsd/imscp_rootv1p1p2" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_rootv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
