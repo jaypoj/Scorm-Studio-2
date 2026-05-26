@@ -527,16 +527,31 @@ const packageLegacyCaptionFiles = async (
   }
 };
 
+const normalizeAnswerText = (value: unknown) => String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const getQuestionOptions = (question: Question) => question.type === 'true-false'
+  ? ['true', 'false']
+  : (question.options?.length ? question.options : ['Option A', 'Option B', 'Option C', 'Option D']);
+
+const getCorrectOptionIndex = (question: Question, options: string[]) => {
+  const correct = normalizeAnswerText(question.correctAnswer);
+  const directIndex = options.findIndex(option => String(option).trim() === String(question.correctAnswer).trim());
+  if (directIndex >= 0) return directIndex;
+  const normalizedIndex = options.findIndex(option => normalizeAnswerText(option) === correct);
+  return normalizedIndex >= 0 ? normalizedIndex : 0;
+};
+
 const renderQuestion = (question: Question, index: number, prefix: string) => {
   const name = `${prefix}-q-${index}`;
-  const options = question.type === 'true-false'
-    ? ['true', 'false']
-    : (question.options?.length ? question.options : ['Option A', 'Option B', 'Option C', 'Option D']);
+  const options = getQuestionOptions(question);
+  const correctOptionIndex = getCorrectOptionIndex(question, options);
+  const correctOptionId = `option_${correctOptionIndex + 1}`;
+  const questionId = safeId(question.id || name);
 
-  return `<div class="question" data-correct="${escapeHtml(String(question.correctAnswer))}" data-correct-feedback="${escapeHtml(question.feedback?.correct || 'Correct.')}" data-incorrect-feedback="${escapeHtml(question.feedback?.incorrect || 'Review the material and try again.')}">
+  return `<div class="question" data-question-id="${escapeHtml(questionId)}" data-question-type="${escapeHtml(question.type)}" data-correct-option-id="${escapeHtml(correctOptionId)}" data-correct-answer="${escapeHtml(String(options[correctOptionIndex] ?? question.correctAnswer))}" data-correct-feedback="${escapeHtml(question.feedback?.correct || 'Correct.')}" data-incorrect-feedback="${escapeHtml(question.feedback?.incorrect || 'Review the material and try again.')}">
     <p class="question-text">${escapeHtml(question.question)}</p>
     <div class="options">
-      ${options.map(option => `<label class="option"><input type="radio" name="${escapeHtml(name)}" value="${escapeHtml(String(option))}"><span>${escapeHtml(String(option))}</span></label>`).join('')}
+      ${options.map((option, optionIndex) => `<label class="option"><input type="radio" name="${escapeHtml(name)}" value="option_${optionIndex + 1}" data-answer-text="${escapeHtml(String(option))}"><span>${escapeHtml(String(option))}</span></label>`).join('')}
     </div>
     <div class="feedback" aria-live="polite"></div>
   </div>`;
@@ -650,8 +665,9 @@ function initializeCompletionGate(){document.querySelectorAll('.narration-audio'
 function getGateState(){const messages=[];const kc=document.querySelector('.knowledge-check');const audio=document.querySelector('.narration-audio');if(COURSE_SETTINGS.requireKnowledgeCheckBeforeContinue&&kc&&kc.dataset.completed!=='true')messages.push('Complete the knowledge check to continue.');if(COURSE_SETTINGS.requireAudioCompletionBeforeContinue&&audio&&audio.dataset.completed!=='true')messages.push('Listen to the full narration to continue.');return messages}
 function updateNextGate(){const next=el('next-button');if(!next)return;const messages=getGateState();next.disabled=messages.length>0;next.title=messages.join(' ');const gate=el('gate-message');if(gate)gate.textContent=messages.join(' ')}
 function submitKnowledgeCheck(btn){const box=btn.closest('.knowledge-check');const questions=Array.from(box.querySelectorAll('.question'));const passed=questions.map(q=>gradeQuestion(q)).every(Boolean);box.dataset.completed=String(passed);if(passed)showAlert('Knowledge check complete.');updateNextGate()}
-function gradeQuestion(q){const selected=q.querySelector('input:checked');const fb=q.querySelector('.feedback');if(!selected){fb.textContent='Choose an answer first.';fb.className='feedback incorrect';return false}const ok=String(selected.value).trim()===String(q.dataset.correct).trim();fb.textContent=ok?q.dataset.correctFeedback:q.dataset.incorrectFeedback;fb.className='feedback '+(ok?'correct':'incorrect');return ok}
-function submitAssessment(){const qs=Array.from(document.querySelectorAll('.assessment-card .question'));const correct=qs.filter(q=>gradeQuestion(q)).length;const score=qs.length?Math.round((correct/qs.length)*100):0;const result=el('assessment-result');const passed=score>=${passMark};result.textContent='Score: '+score+'% - '+(passed?'Passed':'Try again');result.className='assessment-result '+(passed?'pass':'fail');if(window.SCORM){SCORM.set('cmi.core.score.raw',score);SCORM.set('cmi.core.score.min',0);SCORM.set('cmi.core.score.max',100);SCORM.set('cmi.core.lesson_status',passed?'passed':'failed');SCORM.commit()}}
+function gradeQuestion(q){const selected=q.querySelector('input:checked');const fb=q.querySelector('.feedback');if(!selected){fb.textContent='Choose an answer first.';fb.className='feedback incorrect';return false}const ok=String(selected.value).trim()===String(q.dataset.correctOptionId).trim();fb.textContent=ok?q.dataset.correctFeedback:q.dataset.incorrectFeedback;fb.className='feedback '+(ok?'correct':'incorrect');return ok}
+function recordAssessmentInteraction(q,index){if(!window.SCORM)return;const selected=q.querySelector('input:checked');const ok=Boolean(selected&&String(selected.value).trim()===String(q.dataset.correctOptionId).trim());const base='cmi.interactions.'+index;SCORM.set(base+'.id',q.dataset.questionId||('assessment_q_'+(index+1)));SCORM.set(base+'.type',q.dataset.questionType==='true-false'?'true-false':'choice');SCORM.set(base+'.student_response',selected?selected.value:'');SCORM.set(base+'.correct_responses.0.pattern',q.dataset.correctOptionId||'');SCORM.set(base+'.result',ok?'correct':'wrong');SCORM.set(base+'.weighting','1')}
+function submitAssessment(){const qs=Array.from(document.querySelectorAll('.assessment-card .question'));const correct=qs.filter(q=>gradeQuestion(q)).length;const score=qs.length?Math.round((correct/qs.length)*100):0;const result=el('assessment-result');const passed=score>=${passMark};result.textContent='Score: '+score+'% - '+(passed?'Passed':'Try again');result.className='assessment-result '+(passed?'pass':'fail');if(window.SCORM){qs.forEach(recordAssessmentInteraction);SCORM.set('cmi.core.score.raw',score);SCORM.set('cmi.core.score.min',0);SCORM.set('cmi.core.score.max',100);SCORM.set('cmi.core.lesson_status',passed?'passed':'failed');SCORM.commit()}}
 document.addEventListener('click',e=>{const nav=e.target.closest('.nav-item');if(nav){e.preventDefault();const target=Number(nav.dataset.index);const messages=getGateState();if(target>current&&messages.length){showAlert(messages.join(' '));return}loadPage(target)}});
 document.addEventListener('DOMContentLoaded',()=>{el('prev-button').onclick=prevPage;el('next-button').onclick=nextPage;loadPage(0)});
 `;
