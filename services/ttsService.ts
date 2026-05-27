@@ -46,6 +46,28 @@ const buildTtsError = (message: string, details: TtsErrorDetails = {}) => {
   return error;
 };
 
+const stringifyErrorValue = (value: unknown): string => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    const item = value as any;
+    return item.message || item.error?.message || item.error || item.code || JSON.stringify(item);
+  }
+  return String(value);
+};
+
+const getAzureErrorMessage = (body: any, fallback: string) => {
+  const candidates = [
+    body?.error?.message,
+    body?.error,
+    body?.message,
+    body?.detail,
+    body?.details,
+  ].map(stringifyErrorValue).filter(Boolean);
+  return candidates[0] || fallback;
+};
+
 export const getTtsErrorDetails = (error: unknown) => (error as TtsError)?.ttsDetails;
 
 export const isTtsQuotaError = (error: unknown) => {
@@ -100,8 +122,8 @@ export async function generateNarrationAudio(
     let code: string | undefined;
     try {
       const body = await response.json();
-      message = body.error || body.message || message;
-      code = body.code;
+      message = getAzureErrorMessage(body, message);
+      code = stringifyErrorValue(body?.error?.code || body?.code) || undefined;
     } catch {
       message = await response.text().catch(() => message) || message;
     }

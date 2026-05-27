@@ -795,6 +795,7 @@ const App: React.FC = () => {
       const pagesById = new Map<string, Topic | WelcomePage | LearningObjectivesPage>();
       let generatedCount = 0;
       let skippedCount = 0;
+      let existingAudioSkippedCount = 0;
       let quotaPaused = false;
       for (const page of pages) {
         if (!page.narration?.trim()) {
@@ -804,6 +805,7 @@ const App: React.FC = () => {
         }
         if ((page.media || []).some(isNarrationAudioMedia) && !aiSettings.regenerateExistingAudio) {
           skippedCount += 1;
+          existingAudioSkippedCount += 1;
           updateBatchProgressItem(page.id, { audioStatus: 'done', message: 'Existing narration audio preserved.' });
           continue;
         }
@@ -832,6 +834,8 @@ const App: React.FC = () => {
       updateProjectData(project => replacePagesInProject(project, pagesById));
       if (quotaPaused) {
         alert(`Batch TTS paused. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}. Completed pages were saved. Resume later after the provider retry window, or after IT raises the Azure OpenAI deployment quota.`);
+      } else if (generatedCount === 0 && existingAudioSkippedCount > 0) {
+        alert(`Batch TTS complete. No new audio was generated because ${existingAudioSkippedCount} page${existingAudioSkippedCount === 1 ? ' already has' : 's already have'} narration audio. Turn on "Regenerate existing narration audio" in AI Settings if you want to replace it.`);
       } else {
         alert(`Batch TTS complete. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}.`);
       }

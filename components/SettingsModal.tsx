@@ -100,7 +100,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      />
                      <span className="text-xs text-slate-700">
                          <span className="block font-semibold text-slate-800">Regenerate existing narration audio during batch TTS</span>
-                         Leave this off to avoid spending quota on pages that already have usable audio.
+                         Leave this off to avoid spending quota on pages that already have usable audio. Turn it on if a batch reports 0 new pages because audio already exists.
                      </span>
                  </label>
              </div>
