@@ -22,11 +22,13 @@ A Vite + React editor for SCORM course projects exported from Google AI Studio. 
 
 > Important: this is currently a browser-only Vite app, so any `VITE_*` key is embedded in the browser test build. Use restricted Google Cloud/API keys for development: limit HTTP referrers where practical, enable only the APIs needed, set quota limits, and rotate keys before production. For production, move Gemini/Search calls behind a server API proxy so secrets are never shipped to users.
 
+Azure OpenAI TTS is configured at runtime in AI Settings. Team members paste the Azure endpoint and API key into the password-protected app; those values are stored in that browser's local storage and are not committed or baked into GitHub Pages.
+
 ### Key purpose
 
 | Variable | Required | Used for |
 | --- | --- | --- |
-| `VITE_GEMINI_API_KEY` | Yes for AI features | Gemini topic generation, distractors, research, image generation, audio captions |
+| `VITE_GEMINI_API_KEY` | Yes for Gemini AI features | Gemini topic generation, distractors, research, image generation, uploaded-audio captions |
 | `VITE_GOOGLE_SEARCH_API_KEY` | Optional | YouTube Data API video search |
 | `VITE_PIXABAY_API_KEY` | Optional | Pixabay image search |
 
@@ -89,6 +91,8 @@ For UI testing, deploy without keys first. If you want AI features on the public
 | `VITE_PIXABAY_API_KEY` | Pixabay image search |
 
 > Warning: because GitHub Pages is static, these values are baked into browser JavaScript. Only use restricted, disposable test keys. Do not put production secrets in a static Pages build.
+
+For TTS on the public Pages app, unlock the site, open AI Settings, and paste the Azure OpenAI endpoint and key there. Do not put the Azure OpenAI key in GitHub secrets or source files.
 
 ## Codex Cloud / forwarded-port preview
 

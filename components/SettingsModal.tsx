@@ -50,31 +50,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           </div>
 
           <div className="pt-2 border-t border-slate-200">
-             <h3 className="text-sm font-semibold text-slate-800 mb-3">Quota Saver</h3>
+             <h3 className="text-sm font-semibold text-slate-800 mb-3">Azure OpenAI TTS</h3>
              <div className="space-y-3">
                  <div>
-                     <label className="block text-xs font-medium text-slate-700 mb-1">Gemini Quota Mode</label>
-                     <select
-                         value={localSettings.quotaMode || 'free-first'}
-                         onChange={(e) => setLocalSettings(prev => ({ ...prev, quotaMode: e.target.value as AISettings['quotaMode'] }))}
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Azure OpenAI Endpoint</label>
+                     <input
+                         type="url"
+                         value={localSettings.azureOpenAiEndpoint || ''}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiEndpoint: e.target.value }))}
                          className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                     >
-                         <option value="free-first">Free-first: conserve preview TTS quota</option>
-                         <option value="paid-gemini">Paid Gemini: no local TTS budget cap</option>
-                     </select>
+                         placeholder="https://your-resource.services.ai.azure.com"
+                     />
                  </div>
                  <div>
-                     <label className="block text-xs font-medium text-slate-700 mb-1">Free-first TTS Budget Per Run</label>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Azure OpenAI API Key</label>
                      <input
-                         type="number"
-                         min={1}
-                         max={100}
-                         value={localSettings.ttsDailyBudget ?? 8}
-                         onChange={(e) => setLocalSettings(prev => ({ ...prev, ttsDailyBudget: Math.max(1, parseInt(e.target.value, 10) || 8) }))}
+                         type="password"
+                         value={localSettings.azureOpenAiApiKey || ''}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiApiKey: e.target.value }))}
                          className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         placeholder="Paste team-provided Azure key"
                      />
-                     <p className="mt-1 text-[11px] text-slate-500">Default is 8 to stay below the common free-tier TTS limit of 10 requests per project.</p>
                  </div>
+                 <div className="grid grid-cols-2 gap-3">
+                     <div>
+                         <label className="block text-xs font-medium text-slate-700 mb-1">TTS Model</label>
+                         <input
+                             value={localSettings.azureOpenAiTtsModel || 'gpt-4o-mini-tts'}
+                             onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiTtsModel: e.target.value }))}
+                             className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         />
+                     </div>
+                     <div>
+                         <label className="block text-xs font-medium text-slate-700 mb-1">API Version</label>
+                         <input
+                             value={localSettings.azureOpenAiApiVersion || 'preview'}
+                             onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiApiVersion: e.target.value }))}
+                             className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         />
+                     </div>
+                 </div>
+                 <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">This stores the Azure key in this browser only, similar to the runtime Gemini key. Do not add the Azure key to GitHub Pages secrets or source files.</p>
                  <label className="flex items-start gap-3 p-3 rounded border border-slate-200 bg-slate-50">
                      <input
                          type="checkbox"

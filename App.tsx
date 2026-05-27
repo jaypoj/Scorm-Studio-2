@@ -4,17 +4,19 @@ import { TopicEditor } from './components/TopicEditor';
 import { AssessmentEditor } from './components/AssessmentEditor';
 import { AIGeneratorModal } from './components/AIGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
+import { PasswordGate } from './components/PasswordGate';
 import { NewCourseModal, NewCourseRequest } from './components/NewCourseModal';
 import { ScormManager } from './services/scormManager';
 import { ScormPackager } from './services/scormPackager';
-import { formatGeminiErrorForUser, generateCourseContent, generateNarrationAudio, transcribeAudioToVTT } from './services/geminiService';
+import { formatGeminiErrorForUser, generateCourseContent, transcribeAudioToVTT } from './services/geminiService';
+import { formatTtsErrorForUser, generateNarrationAudio, getTtsErrorDetails, isTtsQuotaError } from './services/ttsService';
 import { importPowerPointCourse } from './services/powerPointImporter';
 import { importLegacyScormFromFolder, importLegacyScormFromZip } from './services/legacyScormImporter';
 import { BinaryDecoder } from './services/binaryDecoder';
 import { formatGeminiQuotaGuidance, parseGeminiQuotaError, recordGeminiQuotaEvent } from './services/geminiQuota';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
 import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
-import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS } from './constants';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
 
@@ -37,6 +39,7 @@ const App: React.FC = () => {
   const [batchProgress, setBatchProgress] = useState<BatchProgressItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSiteUnlocked, setIsSiteUnlocked] = useState(() => sessionStorage.getItem('scorm_studio_unlocked') === 'true');
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Integrity Scan State
@@ -50,8 +53,6 @@ const App: React.FC = () => {
     const parsed = saved ? JSON.parse(saved) : { model: DEFAULT_GEMINI_MODEL };
     return {
       allowBundledGeminiFallback: false,
-      quotaMode: 'free-first',
-      ttsDailyBudget: 8,
       regenerateExistingAudio: false,
       ...parsed,
     };
@@ -60,13 +61,16 @@ const App: React.FC = () => {
   const saveAiSettings = (s: AISettings) => {
     const normalized = {
       allowBundledGeminiFallback: false,
-      quotaMode: 'free-first' as const,
-      ttsDailyBudget: 8,
       regenerateExistingAudio: false,
       ...s,
     };
     setAiSettings(normalized);
     localStorage.setItem('scorm_ai_settings', JSON.stringify(normalized));
+  };
+
+  const lockSite = () => {
+    sessionStorage.removeItem('scorm_studio_unlocked');
+    setIsSiteUnlocked(false);
   };
 
   // INTEGRITY SCANNER EFFECT
@@ -326,10 +330,14 @@ const App: React.FC = () => {
     }
   };
 
-  const normalizePronunciationConfig = (value: Partial<PronunciationConfig> | null | undefined): PronunciationConfig => ({
-    tts: { ...DEFAULT_TTS_SETTINGS, ...(value?.tts || {}) },
-    pronunciations: Array.isArray(value?.pronunciations) ? value.pronunciations : [],
-  });
+  const normalizePronunciationConfig = (value: Partial<PronunciationConfig> | null | undefined): PronunciationConfig => {
+    const tts = { ...DEFAULT_TTS_SETTINGS, ...(value?.tts || {}) };
+    if (!OPENAI_TTS_VOICES.includes(tts.voiceName)) tts.voiceName = DEFAULT_TTS_SETTINGS.voiceName;
+    return {
+      tts,
+      pronunciations: Array.isArray(value?.pronunciations) ? value.pronunciations : [],
+    };
+  };
 
   const loadPronunciationConfig = async (rootHandle: FileSystemDirectoryHandle | null, sandbox: boolean) => {
     if (!rootHandle || sandbox) {
@@ -740,7 +748,7 @@ const App: React.FC = () => {
       original_name: `${storageId}.wav`,
       mimeType: 'audio/wav',
       extension: 'wav',
-      source: 'gemini-tts',
+      source: 'azure-openai-tts',
       created: new Date().toISOString()
     };
     await handleAssetCreate(new File([JSON.stringify(metadata, null, 2)], `${storageId}.json`, { type: 'application/json' }), storageId);
@@ -751,7 +759,7 @@ const App: React.FC = () => {
       type: 'audio',
       title: `Narration: ${page.title}`,
       url: '',
-      source: 'gemini-tts'
+      source: 'azure-openai-tts'
     };
     return { ...page, media: [...(page.media || []).filter(media => !isNarrationAudioMedia(media)), newMedia] };
   };
@@ -781,8 +789,6 @@ const App: React.FC = () => {
   const handleBatchGenerateTts = async () => {
     if (!context?.assetsHandle) return;
     const pages = getEditablePages(context.projectData);
-    const isFreeFirst = (aiSettings.quotaMode || 'free-first') === 'free-first';
-    const ttsBudget = isFreeFirst ? Math.max(1, aiSettings.ttsDailyBudget || 8) : Number.POSITIVE_INFINITY;
     setBatchJob('tts');
     setBatchProgress(buildBatchProgress(pages));
     try {
@@ -801,30 +807,20 @@ const App: React.FC = () => {
           updateBatchProgressItem(page.id, { audioStatus: 'done', message: 'Existing narration audio preserved.' });
           continue;
         }
-        if (generatedCount >= ttsBudget) {
-          quotaPaused = true;
-          updateBatchProgressDetails(page.id, {
-            audioStatus: 'pending',
-            quotaPaused: true,
-            providerMessage: `Free-first TTS budget paused after ${generatedCount} new request${generatedCount === 1 ? '' : 's'}. Resume later or switch quota mode in AI Settings.`,
-          });
-          continue;
-        }
         updateBatchProgressItem(page.id, { audioStatus: 'running' });
         try {
           pagesById.set(page.id, await createAudioAssetForPage(page));
           generatedCount += 1;
           updateBatchProgressItem(page.id, { audioStatus: 'done' });
         } catch (error: any) {
-          const quota = parseGeminiQuotaError(error, 'Batch Generate TTS', 'gemini-2.5-flash-preview-tts');
-          if (quota.isQuotaError) {
+          if (isTtsQuotaError(error)) {
             quotaPaused = true;
-            recordGeminiQuotaEvent(quota);
+            const details = getTtsErrorDetails(error);
             updateBatchProgressDetails(page.id, {
               audioStatus: 'pending',
               quotaPaused: true,
-              retryAfterSeconds: quota.retryAfterSeconds,
-              providerMessage: formatGeminiQuotaGuidance(quota),
+              retryAfterSeconds: details?.retryAfterSeconds,
+              providerMessage: formatTtsErrorForUser(error, 'Batch Generate TTS'),
               message: 'Quota paused before this page was generated.',
             });
             break;
@@ -835,13 +831,13 @@ const App: React.FC = () => {
       }
       updateProjectData(project => replacePagesInProject(project, pagesById));
       if (quotaPaused) {
-        alert(`Batch TTS paused. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}. Completed pages were saved. Resume later after quota resets or adjust AI Settings.`);
+        alert(`Batch TTS paused. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}. Completed pages were saved. Resume later after the provider retry window, or after IT raises the Azure OpenAI deployment quota.`);
       } else {
         alert(`Batch TTS complete. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}.`);
       }
     } catch (error: any) {
       console.error(error);
-      alert(`Batch TTS failed:\n\n${formatGeminiErrorForUser(error, 'Batch Generate TTS')}`);
+      alert(`Batch TTS failed:\n\n${formatTtsErrorForUser(error, 'Batch Generate TTS')}`);
     } finally {
       setBatchJob(null);
     }
@@ -1227,6 +1223,10 @@ const App: React.FC = () => {
     );
   }
 
+  if (!isSiteUnlocked) {
+    return <PasswordGate onUnlock={() => setIsSiteUnlocked(true)} />;
+  }
+
   // Project Select Screen
   if (!context && view === 'project-select') {
      return (
@@ -1318,6 +1318,7 @@ const App: React.FC = () => {
         onSave={handleSave}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onCloseProject={handleCloseProject}
+        onLockSite={lockSite}
         onBatchGenerateTts={handleBatchGenerateTts}
         onBatchGenerateCaptions={handleBatchGenerateCaptions}
         batchJob={batchJob}

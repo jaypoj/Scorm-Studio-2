@@ -10,6 +10,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onCloseProject: () => void;
   onCreateNewCourse: () => void;
+  onLockSite: () => void;
   onBatchGenerateTts: () => Promise<void>;
   onBatchGenerateCaptions: () => Promise<void>;
   batchJob?: 'tts' | 'captions' | null;
@@ -18,7 +19,7 @@ interface SidebarProps {
   hideTemplatePages?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse, onBatchGenerateTts, onBatchGenerateCaptions, batchJob = null, batchDisabled = false, resumeTtsAvailable = false, hideTemplatePages = false }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse, onLockSite, onBatchGenerateTts, onBatchGenerateCaptions, batchJob = null, batchDisabled = false, resumeTtsAvailable = false, hideTemplatePages = false }) => {
   const isTopicActive = (id: string) => {
     return typeof currentView === 'object' && currentView.type === 'topic-edit' && currentView.id === id;
   };
@@ -145,7 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
             Batch Generate VTT
           </button>
           <p className="text-[10px] text-slate-500 px-1">
-            Free-first TTS preserves existing audio. VTT is built locally from narration when possible.
+            Azure TTS preserves existing audio by default. VTT is built locally from narration when possible.
           </p>
         </div>
         <button
@@ -175,6 +176,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
         >
           <Save className="w-4 h-4" />
           Save Project
+        </button>
+        <button
+          onClick={onLockSite}
+          className="w-full flex justify-center items-center gap-2 bg-slate-950 hover:bg-black text-slate-300 px-4 py-2 rounded text-xs transition-colors"
+        >
+          Lock Site
         </button>
       </div>
     </div>

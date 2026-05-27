@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Topic, MediaItem, FileSystemDirectoryHandle, FileSystemHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, Question, PronunciationConfig, PronunciationEntry, TtsSettings, BatchJobType, BatchProgressItem } from '../types';
 import { Upload, Image as ImageIcon, Sparkles, Wand2, Mic, Search, BookOpen, ChevronRight, ExternalLink, Activity, X, Info, FileAudio, FileVideo, AlertCircle, Loader2, Link, CheckSquare, Plus, Trash2, CheckCircle2, XCircle, Bot, Maximize2, FileText, Play, Clock } from 'lucide-react';
 import { ScormManager } from '../services/scormManager';
-import { formatGeminiErrorForUser, generateImageFromPrompt, generateNarrationAudio, transcribeAudioToVTT, researchTerm, generateDistractors } from '../services/geminiService';
+import { formatGeminiErrorForUser, generateImageFromPrompt, transcribeAudioToVTT, researchTerm, generateDistractors } from '../services/geminiService';
+import { formatTtsErrorForUser, generateNarrationAudio } from '../services/ttsService';
 import { BinaryDecoder } from '../services/binaryDecoder';
 import { RichTextEditor } from './RichTextEditor';
 import { MediaSearchModal } from './MediaSearchModal';
-import { DEFAULT_TTS_SETTINGS, GEMINI_TTS_VOICES, TTS_PACE_OPTIONS } from '../constants';
+import { DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES, TTS_PACE_OPTIONS } from '../constants';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from '../utils/captions';
 
 interface TopicEditorProps {
@@ -92,8 +93,11 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   const getFriendlyAiFailureMessage = (error: unknown) => {
     const message = getErrorMessage(error);
     const lower = message.toLowerCase();
+    if (lower.includes('azure openai tts')) {
+      return 'Azure OpenAI TTS needs attention. Completed pages are saved and batch work can be resumed after settings are corrected or the provider retry window passes.';
+    }
     if (lower.includes('quota exceeded') || lower.includes('resource_exhausted') || message.includes('"code":429')) {
-      return 'Gemini quota was exhausted for the Google Cloud project behind this key, not just the key itself. Free-tier preview TTS/image quota is very limited; completed pages are saved and batch work can be resumed after quota resets.';
+      return 'Gemini quota was exhausted for the Google Cloud project behind this key, not just the key itself. This applies to remaining Gemini features such as image generation or uploaded-audio transcription; completed pages are saved and batch work can be resumed after quota resets.';
     }
     if (lower.includes('high demand') || lower.includes('unavailable') || message.includes('"code":503')) {
       return 'Gemini is temporarily overloaded. The app tried its fallbacks, but the backend is still unavailable.';
@@ -661,7 +665,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
         original_name: `${storageId}.wav`,
         mimeType: 'audio/wav',
         extension: 'wav',
-        source: 'gemini-tts',
+        source: 'azure-openai-tts',
         created: new Date().toISOString()
       };
       const metadataFile = new File([JSON.stringify(metadata, null, 2)], `${storageId}.json`, { type: 'application/json' });
@@ -673,7 +677,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
         type: 'audio',
         title: `Narration: ${data.title}`,
         url: '',
-        source: 'gemini-tts'
+        source: 'azure-openai-tts'
       };
       onChange({
         ...data,
@@ -686,7 +690,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     } catch (e: any) {
       console.error("Failed to generate narration audio", e);
       const recoveryOpened = recordAiFailure('Text-to-speech narration', e);
-      if (!recoveryOpened) alert(`Failed to generate narration audio:\n\n${formatGeminiErrorForUser(e, 'Text-to-speech narration')}`);
+      if (!recoveryOpened) alert(`Failed to generate narration audio:\n\n${formatTtsErrorForUser(e, 'Text-to-speech narration')}`);
     } finally {
       setGeneratingAudio(false);
     }
@@ -776,7 +780,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
        // Gemini API throws 400 for these. We must decode/sniff the real type.
        const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, 'audio', explicitMimeType);
        
-       const isGeneratedNarrationAudio = (resolvedAudioSource === 'gemini-tts' || (audioItem.title || '').startsWith('Narration:'));
+       const isGeneratedNarrationAudio = (resolvedAudioSource === 'azure-openai-tts' || resolvedAudioSource === 'gemini-tts' || (audioItem.title || '').startsWith('Narration:'));
        let vtt = '';
 
        if (isGeneratedNarrationAudio && data.narration?.trim()) {
@@ -1103,7 +1107,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                             onClick={handleGenerateNarrationAudio}
                             disabled={generatingAudio || !assetsHandle || !data.narration?.trim()}
                             className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
-                            title="Generate narration audio with Gemini TTS. Requests are throttled below 15 RPM."
+                            title="Generate narration audio with Azure OpenAI TTS using the runtime key in AI Settings."
                         >
                             {generatingAudio ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
                             Generate TTS
@@ -1135,7 +1139,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                 onChange={(e) => updateTtsSettings({ ...pronunciationConfig.tts, voiceName: e.target.value })}
                                 className="w-full p-2 text-xs bg-white border border-slate-200 rounded text-slate-800"
                             >
-                                {GEMINI_TTS_VOICES.map(voice => <option key={voice} value={voice}>{voice}</option>)}
+                                {OPENAI_TTS_VOICES.map(voice => <option key={voice} value={voice}>{voice}</option>)}
                             </select>
                         </div>
                         <div>
@@ -1148,6 +1152,17 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                 {TTS_PACE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                             </select>
                         </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Style Instructions</label>
+                        <textarea
+                            value={pronunciationConfig.tts.styleInstructions || DEFAULT_TTS_SETTINGS.styleInstructions}
+                            onChange={(e) => updateTtsSettings({ ...pronunciationConfig.tts, styleInstructions: e.target.value })}
+                            rows={2}
+                            className="w-full p-2 text-xs bg-white border border-slate-200 rounded text-slate-800"
+                            placeholder="Describe tone, delivery, and audience..."
+                        />
                     </div>
 
                     <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
@@ -1237,7 +1252,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                             })}
                         </div>
                     )}
-                    <p className="text-[10px] text-slate-500">Free-first mode preserves existing audio, caps new TTS calls, and builds VTT locally from narration when possible.</p>
+                    <p className="text-[10px] text-slate-500">Azure TTS uses the runtime key in AI Settings. Existing audio is preserved by default, and VTT is built locally from narration when possible.</p>
                 </div>
             </div>
 
@@ -1742,7 +1757,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
                       <div className="text-xs text-slate-600 space-y-2">
                           <p>Gemini quota is tracked per Google Cloud project. A second key from the same project usually shares the same exhausted quota.</p>
-                          <p>Use AI Settings to keep free-first mode, lower the TTS budget, preserve existing audio, or switch to paid Gemini if your project has billing quota.</p>
+                          <p>Use AI Settings to paste the Azure endpoint and TTS key. The key is stored in this browser like the runtime Gemini key.</p>
                       </div>
 
                       <button

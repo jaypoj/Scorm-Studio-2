@@ -183,9 +183,11 @@ export interface AISettings {
   geminiApiKey?: string;
   geminiFallbackApiKey?: string;
   allowBundledGeminiFallback?: boolean;
-  quotaMode?: 'free-first' | 'paid-gemini';
-  ttsDailyBudget?: number;
   regenerateExistingAudio?: boolean;
+  azureOpenAiEndpoint?: string;
+  azureOpenAiApiKey?: string;
+  azureOpenAiTtsModel?: string;
+  azureOpenAiApiVersion?: string;
   googleSearchApiKey?: string;
   googleSearchEngineId?: string;
   pixabayApiKey?: string;
@@ -212,6 +214,7 @@ export interface PronunciationEntry {
 export interface TtsSettings {
   voiceName: string;
   pace: 'very-slow' | 'slow' | 'normal' | 'fast' | 'very-fast';
+  styleInstructions?: string;
 }
 
 export interface PronunciationConfig {

@@ -13,40 +13,25 @@ export const GEMINI_MODEL_OPTIONS = [
 ];
 
 export const DEFAULT_TTS_SETTINGS = {
-  voiceName: "Kore",
+  voiceName: "coral",
   pace: "normal" as const,
+  styleInstructions: "Read as clear, professional e-learning narration for adult technical training. Keep the tone confident, calm, and easy to follow.",
 };
 
-export const GEMINI_TTS_VOICES = [
-  "Kore",
-  "Puck",
-  "Charon",
-  "Fenrir",
-  "Leda",
-  "Orus",
-  "Aoede",
-  "Callirrhoe",
-  "Autonoe",
-  "Enceladus",
-  "Iapetus",
-  "Umbriel",
-  "Algieba",
-  "Despina",
-  "Erinome",
-  "Algenib",
-  "Rasalgethi",
-  "Laomedeia",
-  "Achernar",
-  "Alnilam",
-  "Schedar",
-  "Gacrux",
-  "Pulcherrima",
-  "Achird",
-  "Zubenelgenubi",
-  "Vindemiatrix",
-  "Sadachbia",
-  "Sadaltager",
-  "Sulafat",
+export const OPENAI_TTS_VOICES = [
+  "alloy",
+  "ash",
+  "ballad",
+  "coral",
+  "echo",
+  "fable",
+  "nova",
+  "onyx",
+  "sage",
+  "shimmer",
+  "verse",
+  "marin",
+  "cedar",
 ];
 
 export const TTS_PACE_OPTIONS = [

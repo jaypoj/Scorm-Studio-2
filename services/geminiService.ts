@@ -1,6 +1,6 @@
 import { GoogleGenAI, createPartFromBase64 } from '@google/genai';
 import JSZip from 'jszip';
-import { AISettings, AiRateLimitLevel, CourseContent, PronunciationEntry, Question, Topic, TtsSettings } from '../types';
+import { AISettings, AiRateLimitLevel, CourseContent, Question, Topic } from '../types';
 import { DEFAULT_GEMINI_MODEL } from '../constants';
 import { getGeminiApiKeys, requireGeminiApiKey } from './env';
 import { sanitizeWebVtt } from '../utils/captions';
@@ -9,9 +9,7 @@ import { formatGeminiQuotaGuidance, parseGeminiQuotaError } from './geminiQuota'
 const getClient = (apiKey: string) => new GoogleGenAI({ apiKey });
 const getModel = (settings?: AISettings) => settings?.model || DEFAULT_GEMINI_MODEL;
 const IMAGE_GENERATION_MODEL = 'gemini-2.5-flash-image';
-const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
-const TTS_MIN_INTERVAL_MS = 4100;
-let lastTtsRequestAt = 0;
+const TRANSCRIPTION_MIN_INTERVAL_MS = 4100;
 let lastTranscriptionRequestAt = 0;
 const TRANSCRIPTION_MODELS = [
   'gemini-2.0-flash',
@@ -79,69 +77,10 @@ async function withGeminiFallback<T>(settings: AISettings | undefined, apiCall: 
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const throttleTts = async () => {
-  const elapsed = Date.now() - lastTtsRequestAt;
-  if (elapsed < TTS_MIN_INTERVAL_MS) await sleep(TTS_MIN_INTERVAL_MS - elapsed);
-  lastTtsRequestAt = Date.now();
-};
-
 const throttleTranscription = async () => {
   const elapsed = Date.now() - lastTranscriptionRequestAt;
-  if (elapsed < TTS_MIN_INTERVAL_MS) await sleep(TTS_MIN_INTERVAL_MS - elapsed);
+  if (elapsed < TRANSCRIPTION_MIN_INTERVAL_MS) await sleep(TRANSCRIPTION_MIN_INTERVAL_MS - elapsed);
   lastTranscriptionRequestAt = Date.now();
-};
-
-export const applyPronunciations = (script: string, pronunciations: PronunciationEntry[] = []) => {
-  return pronunciations.reduce((current, entry) => {
-    const term = entry.term.trim();
-    const replacement = entry.replacement.trim();
-    if (!term || !replacement) return current;
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return current.replace(new RegExp(`\\b${escaped}\\b`, 'g'), replacement);
-  }, script);
-};
-
-const getPaceInstruction = (pace: TtsSettings['pace']) => {
-  switch (pace) {
-    case 'very-slow': return 'Use a very slow, careful instructional pace.';
-    case 'slow': return 'Use a slow, clear instructional pace.';
-    case 'fast': return 'Use a brisk but understandable training pace.';
-    case 'very-fast': return 'Use a very brisk pace while keeping words intelligible.';
-    default: return 'Use a steady, natural training pace.';
-  }
-};
-
-const base64ToBytes = (base64: string) => {
-  const byteCharacters = atob(base64);
-  const byteNumbers = new Array(byteCharacters.length);
-  for (let i = 0; i < byteCharacters.length; i++) byteNumbers[i] = byteCharacters.charCodeAt(i);
-  return new Uint8Array(byteNumbers);
-};
-
-const pcmToWav = (pcmBytes: Uint8Array, sampleRate = 24000, channels = 1, bitsPerSample = 16) => {
-  const header = new ArrayBuffer(44);
-  const view = new DataView(header);
-  const writeString = (offset: number, value: string) => {
-    for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
-  };
-  const byteRate = sampleRate * channels * bitsPerSample / 8;
-  const blockAlign = channels * bitsPerSample / 8;
-
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + pcmBytes.length, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, channels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitsPerSample, true);
-  writeString(36, 'data');
-  view.setUint32(40, pcmBytes.length, true);
-
-  return new Blob([header, pcmBytes], { type: 'audio/wav' });
 };
 
 const COURSE_GENERATION_LIMITS: Record<AiRateLimitLevel, { delayMs: number; maxTextChars: number; maxBinaryFileBytes: number; maxTotalBinaryBytes: number }> = {
@@ -401,46 +340,6 @@ export async function generateImageFromPrompt(prompt: string, settings?: AISetti
 
   if (!imageBytes) throw new Error('Gemini did not return generated image bytes.');
   return imageBytes;
-}
-
-export async function generateNarrationAudio(
-  settings: AISettings,
-  narration: string,
-  ttsSettings: TtsSettings = { voiceName: 'Kore', pace: 'normal' },
-  pronunciations: PronunciationEntry[] = []
-): Promise<Blob> {
-  const script = applyPronunciations(narration, pronunciations).trim();
-  if (!script) throw new Error('Narration script is empty.');
-  await throttleTts();
-
-  const response: any = await withGeminiFallback(settings, `client.models.generateContent(model="${TTS_MODEL}", responseModalities="AUDIO", voice="${ttsSettings.voiceName}", pace="${ttsSettings.pace}")`, client => client.models.generateContent({
-    model: TTS_MODEL,
-    contents: [{
-      text: `Read this e-learning narration clearly and professionally. ${getPaceInstruction(ttsSettings.pace)}\n\n${script}`,
-    }],
-    config: {
-      responseModalities: ['AUDIO'],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: ttsSettings.voiceName,
-          },
-        },
-      },
-    },
-  }));
-
-  const part =
-    response?.candidates?.[0]?.content?.parts?.find((item: any) => item.inlineData?.data) ||
-    response?.parts?.find((item: any) => item.inlineData?.data);
-  const audioBase64 = part?.inlineData?.data;
-  const mimeType = part?.inlineData?.mimeType || '';
-  if (!audioBase64) throw new Error('Gemini TTS did not return audio.');
-
-  const audioBytes = base64ToBytes(audioBase64);
-  return mimeType.includes('wav')
-    ? new Blob([audioBytes], { type: 'audio/wav' })
-    : pcmToWav(audioBytes);
 }
 
 export async function transcribeAudioToVTT(file: File, settings?: AISettings): Promise<string> {
