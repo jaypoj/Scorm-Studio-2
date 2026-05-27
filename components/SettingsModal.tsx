@@ -20,9 +20,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
-        <div className="flex justify-between items-center mb-6">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="flex justify-between items-center gap-4 p-6 border-b border-slate-200 shrink-0">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Settings className="w-5 h-5 text-slate-600" />
             AI Settings
@@ -32,7 +32,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           </button>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-6 overflow-y-auto p-6">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
                 <Cpu className="w-4 h-4" />
@@ -193,7 +193,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                  </div>
              </div>
           </div>
-          
+        </div>
+        <div className="p-4 border-t border-slate-200 bg-white shrink-0">
           <button
             onClick={() => {
                 onSave(localSettings);
