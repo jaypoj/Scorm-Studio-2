@@ -50,6 +50,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           </div>
 
           <div className="pt-2 border-t border-slate-200">
+             <h3 className="text-sm font-semibold text-slate-800 mb-3">Quota Saver</h3>
+             <div className="space-y-3">
+                 <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Gemini Quota Mode</label>
+                     <select
+                         value={localSettings.quotaMode || 'free-first'}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, quotaMode: e.target.value as AISettings['quotaMode'] }))}
+                         className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                     >
+                         <option value="free-first">Free-first: conserve preview TTS quota</option>
+                         <option value="paid-gemini">Paid Gemini: no local TTS budget cap</option>
+                     </select>
+                 </div>
+                 <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Free-first TTS Budget Per Run</label>
+                     <input
+                         type="number"
+                         min={1}
+                         max={100}
+                         value={localSettings.ttsDailyBudget ?? 8}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, ttsDailyBudget: Math.max(1, parseInt(e.target.value, 10) || 8) }))}
+                         className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                     />
+                     <p className="mt-1 text-[11px] text-slate-500">Default is 8 to stay below the common free-tier TTS limit of 10 requests per project.</p>
+                 </div>
+                 <label className="flex items-start gap-3 p-3 rounded border border-slate-200 bg-slate-50">
+                     <input
+                         type="checkbox"
+                         checked={Boolean(localSettings.regenerateExistingAudio)}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, regenerateExistingAudio: e.target.checked }))}
+                         className="mt-0.5"
+                     />
+                     <span className="text-xs text-slate-700">
+                         <span className="block font-semibold text-slate-800">Regenerate existing narration audio during batch TTS</span>
+                         Leave this off to avoid spending quota on pages that already have usable audio.
+                     </span>
+                 </label>
+             </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200">
              <h3 className="text-sm font-semibold text-slate-800 mb-3">Gemini Key Control</h3>
              <div className="bg-blue-50 text-blue-900 border border-blue-200 text-xs p-3 rounded mb-4">
                  <p className="font-bold mb-1">Runtime Gemini keys are now the default source for AI calls.</p>

@@ -3,6 +3,8 @@ import JSZip from 'jszip';
 import { AISettings, AiRateLimitLevel, CourseContent, PronunciationEntry, Question, Topic, TtsSettings } from '../types';
 import { DEFAULT_GEMINI_MODEL } from '../constants';
 import { getGeminiApiKeys, requireGeminiApiKey } from './env';
+import { sanitizeWebVtt } from '../utils/captions';
+import { formatGeminiQuotaGuidance, parseGeminiQuotaError } from './geminiQuota';
 
 const getClient = (apiKey: string) => new GoogleGenAI({ apiKey });
 const getModel = (settings?: AISettings) => settings?.model || DEFAULT_GEMINI_MODEL;
@@ -46,6 +48,10 @@ const buildGeminiError = (error: unknown, apiKey: string, apiCall: string): Gemi
 
 export const formatGeminiErrorForUser = (error: unknown, fallbackAction = 'Gemini request') => {
   const details = (error as GeminiError)?.geminiDetails;
+  const quota = parseGeminiQuotaError(error, fallbackAction);
+  if (quota.isQuotaError) {
+    return `${formatGeminiQuotaGuidance(quota)}\n\nRaw provider message:\n${details?.apiError || getErrorMessage(error)}`;
+  }
   const apiError = getErrorMessage(error);
   if (!details) {
     return `${fallbackAction} failed because of "${apiError}"`;
@@ -461,7 +467,9 @@ export async function transcribeAudioToVTT(file: File, settings?: AISettings): P
 
         const text = response.text?.trim();
         if (!text) throw new Error(`Gemini returned an empty transcription from ${model}.`);
-        return text.startsWith('WEBVTT') ? text : `WEBVTT\n\n${text}`;
+        const vtt = sanitizeWebVtt(text);
+        if (!vtt) throw new Error(`Gemini returned a transcription without valid WebVTT cues from ${model}.`);
+        return vtt;
       } catch (error) {
         lastError = error;
         if (!isTemporaryGeminiError(error)) break;

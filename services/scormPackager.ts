@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { FileSystemDirectoryHandle, MediaItem, Question, ScormProject, Topic, WelcomePage, LearningObjectivesPage } from '../types';
+import { buildVttFromNarration, estimateNarrationDurationSeconds, sanitizeWebVtt } from '../utils/captions';
 
 type Page = Topic | WelcomePage | LearningObjectivesPage;
 type ImageExportDiagnostic = {
@@ -33,6 +34,13 @@ const safeId = (value: string) => value.replace(/[^a-z0-9-_]/gi, '-').toLowerCas
 
 const getMediaKind = (media: MediaItem) => (media.type || '').toLowerCase();
 const withoutExtension = (value: string) => value.replace(/\.[^.]+$/, '');
+
+const getExportCaption = (page: Page, caption: string) => {
+  const sanitized = sanitizeWebVtt(caption);
+  if (sanitized) return sanitized;
+  const narration = page.narration?.trim();
+  return narration ? buildVttFromNarration(narration, estimateNarrationDurationSeconds(narration)) : '';
+};
 const getExtension = (value: string) => value.split('.').pop()?.toLowerCase() || '';
 const getStemNumber = (value: string, prefix: string) => {
   const match = withoutExtension(value).match(new RegExp(`^${prefix}-(\\d+)$`, 'i'));
@@ -521,8 +529,9 @@ const packageLegacyCaptionFiles = async (
     if (!captionFile) continue;
 
     const captionHref = `media/caption-${safeId(page.id)}.vtt`;
-    const text = await captionFile.file.text();
-    zip.file(captionHref, text.trimStart().startsWith('WEBVTT') ? text : `WEBVTT\n\n${text}`);
+    const caption = getExportCaption(page, await captionFile.file.text());
+    if (!caption) continue;
+    zip.file(captionHref, caption);
     captionMap.set(page.id, captionHref);
   }
 };
@@ -934,7 +943,9 @@ export class ScormPackager {
       if (!page.caption?.trim()) continue;
       const captionName = `caption-${safeId(page.id)}.vtt`;
       const captionHref = `media/${captionName}`;
-      zip.file(captionHref, page.caption.startsWith('WEBVTT') ? page.caption : `WEBVTT\n\n${page.caption}`);
+      const caption = getExportCaption(page, page.caption);
+      if (!caption) continue;
+      zip.file(captionHref, caption);
       captionMap.set(page.id, captionHref);
     }
     await packageLegacyCaptionFiles(pages, zip, captionMap, rootHandle);

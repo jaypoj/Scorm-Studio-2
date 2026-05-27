@@ -45,6 +45,64 @@ const toTimestamp = (seconds: number) => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 };
 
+const stripCaptionFences = (value: string) => value
+  .trim()
+  .replace(/^```(?:webvtt|vtt)?\s*/i, '')
+  .replace(/```\s*$/i, '')
+  .trim();
+
+const normalizeCaptionTimestamp = (value: string) => {
+  const normalized = value.trim().replace(',', '.');
+  const match = normalized.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (!match) return '';
+  const hours = match[1] || '00';
+  const minutes = match[2] || '00';
+  const seconds = match[3] || '00';
+  const ms = (match[4] || '000').padEnd(3, '0').slice(0, 3);
+  return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${seconds}.${ms}`;
+};
+
+export const sanitizeWebVtt = (value: string) => {
+  const withoutFences = stripCaptionFences(value || '');
+  const webvttIndex = withoutFences.search(/\bWEBVTT\b/i);
+  const source = webvttIndex >= 0 ? withoutFences.slice(webvttIndex) : withoutFences;
+  const lines = source.replace(/\r/g, '').split('\n');
+  const cues: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line.includes('-->')) continue;
+
+    const [rawStart, rawEndWithSettings = ''] = line.split('-->');
+    const rawEnd = rawEndWithSettings.trim().split(/\s+/)[0] || '';
+    const start = normalizeCaptionTimestamp(rawStart);
+    const end = normalizeCaptionTimestamp(rawEnd);
+    if (!start || !end) continue;
+
+    const textLines: string[] = [];
+    i++;
+    while (i < lines.length) {
+      const next = lines[i].trim();
+      if (!next) break;
+      if (next.includes('-->')) {
+        i--;
+        break;
+      }
+      if (!/^WEBVTT$/i.test(next) && !/^NOTE\b/i.test(next) && !(textLines.length === 0 && /^\d+$/.test(next))) textLines.push(next);
+      i++;
+    }
+
+    const cueText = textLines
+      .join(' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (cueText) cues.push(`${start} --> ${end}\n${cueText}`);
+  }
+
+  return cues.length ? `WEBVTT\n\n${cues.join('\n\n')}` : '';
+};
+
 export const readAudioDurationSeconds = (file: Blob) => new Promise<number>((resolve, reject) => {
   const url = URL.createObjectURL(file);
   const audio = document.createElement('audio');

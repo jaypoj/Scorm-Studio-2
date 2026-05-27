@@ -11,6 +11,7 @@ import { formatGeminiErrorForUser, generateCourseContent, generateNarrationAudio
 import { importPowerPointCourse } from './services/powerPointImporter';
 import { importLegacyScormFromFolder, importLegacyScormFromZip } from './services/legacyScormImporter';
 import { BinaryDecoder } from './services/binaryDecoder';
+import { formatGeminiQuotaGuidance, parseGeminiQuotaError, recordGeminiQuotaEvent } from './services/geminiQuota';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
 import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS } from './constants';
@@ -49,6 +50,9 @@ const App: React.FC = () => {
     const parsed = saved ? JSON.parse(saved) : { model: DEFAULT_GEMINI_MODEL };
     return {
       allowBundledGeminiFallback: false,
+      quotaMode: 'free-first',
+      ttsDailyBudget: 8,
+      regenerateExistingAudio: false,
       ...parsed,
     };
   });
@@ -56,6 +60,9 @@ const App: React.FC = () => {
   const saveAiSettings = (s: AISettings) => {
     const normalized = {
       allowBundledGeminiFallback: false,
+      quotaMode: 'free-first' as const,
+      ttsDailyBudget: 8,
+      regenerateExistingAudio: false,
       ...s,
     };
     setAiSettings(normalized);
@@ -683,14 +690,22 @@ const App: React.FC = () => {
 
   const isNarrationAudioMedia = (media: MediaItem) => media.type === 'audio' && !media.candidate && media.source !== 'powerpoint';
 
-  const buildBatchProgress = (pages: Array<Topic | WelcomePage | LearningObjectivesPage>): BatchProgressItem[] => pages.map(page => ({
-    pageId: page.id,
-    title: page.title,
-    audioStatus: (page.media || []).some(isNarrationAudioMedia) ? 'done' : 'pending',
-    captionStatus: page.caption ? 'done' : 'pending',
-  }));
+  const buildBatchProgress = (pages: Array<Topic | WelcomePage | LearningObjectivesPage>): BatchProgressItem[] => pages.map(page => {
+    const hasAudio = (page.media || []).some(isNarrationAudioMedia);
+    return {
+      pageId: page.id,
+      title: page.title,
+      audioStatus: hasAudio && !aiSettings.regenerateExistingAudio ? 'done' : 'pending',
+      captionStatus: page.caption ? 'done' : 'pending',
+      message: hasAudio && !aiSettings.regenerateExistingAudio ? 'Existing narration audio preserved.' : undefined,
+    };
+  });
 
   const updateBatchProgressItem = (pageId: string, patch: Partial<Pick<BatchProgressItem, 'audioStatus' | 'captionStatus' | 'message'>>) => {
+    setBatchProgress(prev => prev.map(item => item.pageId === pageId ? { ...item, ...patch } : item));
+  };
+
+  const updateBatchProgressDetails = (pageId: string, patch: Partial<BatchProgressItem>) => {
     setBatchProgress(prev => prev.map(item => item.pageId === pageId ? { ...item, ...patch } : item));
   };
 
@@ -766,26 +781,64 @@ const App: React.FC = () => {
   const handleBatchGenerateTts = async () => {
     if (!context?.assetsHandle) return;
     const pages = getEditablePages(context.projectData);
+    const isFreeFirst = (aiSettings.quotaMode || 'free-first') === 'free-first';
+    const ttsBudget = isFreeFirst ? Math.max(1, aiSettings.ttsDailyBudget || 8) : Number.POSITIVE_INFINITY;
     setBatchJob('tts');
     setBatchProgress(buildBatchProgress(pages));
     try {
       const pagesById = new Map<string, Topic | WelcomePage | LearningObjectivesPage>();
+      let generatedCount = 0;
+      let skippedCount = 0;
+      let quotaPaused = false;
       for (const page of pages) {
         if (!page.narration?.trim()) {
+          skippedCount += 1;
           updateBatchProgressItem(page.id, { audioStatus: 'skipped', message: 'No narration script.' });
+          continue;
+        }
+        if ((page.media || []).some(isNarrationAudioMedia) && !aiSettings.regenerateExistingAudio) {
+          skippedCount += 1;
+          updateBatchProgressItem(page.id, { audioStatus: 'done', message: 'Existing narration audio preserved.' });
+          continue;
+        }
+        if (generatedCount >= ttsBudget) {
+          quotaPaused = true;
+          updateBatchProgressDetails(page.id, {
+            audioStatus: 'pending',
+            quotaPaused: true,
+            providerMessage: `Free-first TTS budget paused after ${generatedCount} new request${generatedCount === 1 ? '' : 's'}. Resume later or switch quota mode in AI Settings.`,
+          });
           continue;
         }
         updateBatchProgressItem(page.id, { audioStatus: 'running' });
         try {
           pagesById.set(page.id, await createAudioAssetForPage(page));
+          generatedCount += 1;
           updateBatchProgressItem(page.id, { audioStatus: 'done' });
         } catch (error: any) {
+          const quota = parseGeminiQuotaError(error, 'Batch Generate TTS', 'gemini-2.5-flash-preview-tts');
+          if (quota.isQuotaError) {
+            quotaPaused = true;
+            recordGeminiQuotaEvent(quota);
+            updateBatchProgressDetails(page.id, {
+              audioStatus: 'pending',
+              quotaPaused: true,
+              retryAfterSeconds: quota.retryAfterSeconds,
+              providerMessage: formatGeminiQuotaGuidance(quota),
+              message: 'Quota paused before this page was generated.',
+            });
+            break;
+          }
           updateBatchProgressItem(page.id, { audioStatus: 'error', message: error.message || String(error) });
-          throw error;
+          continue;
         }
       }
       updateProjectData(project => replacePagesInProject(project, pagesById));
-      alert(`Batch TTS complete. Generated audio for ${pagesById.size} pages.`);
+      if (quotaPaused) {
+        alert(`Batch TTS paused. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}. Completed pages were saved. Resume later after quota resets or adjust AI Settings.`);
+      } else {
+        alert(`Batch TTS complete. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}.`);
+      }
     } catch (error: any) {
       console.error(error);
       alert(`Batch TTS failed:\n\n${formatGeminiErrorForUser(error, 'Batch Generate TTS')}`);
@@ -806,6 +859,23 @@ const App: React.FC = () => {
 
       for (const page of pages) {
         const audioItem = (page.media || []).find(isNarrationAudioMedia);
+        if (page.narration?.trim()) {
+          updateBatchProgressItem(page.id, { captionStatus: 'running' });
+          const durationSeconds = audioItem
+            ? await (async () => {
+                const fileHandle = await findAssetFile(audioItem.storageId);
+                if (!fileHandle) return estimateNarrationDurationSeconds(page.narration);
+                const meta = await findAssetMetadata(audioItem.storageId);
+                const file = await fileHandle.getFile();
+                const { blob } = await BinaryDecoder.decodeMedia(file, 'audio', meta?.mimeType);
+                return readAudioDurationSeconds(blob).catch(() => estimateNarrationDurationSeconds(page.narration));
+              })()
+            : estimateNarrationDurationSeconds(page.narration);
+          pagesById.set(page.id, { ...page, caption: buildVttFromNarration(page.narration, durationSeconds) });
+          captionCount += 1;
+          updateBatchProgressItem(page.id, { captionStatus: 'done', message: 'Built locally from narration text.' });
+          continue;
+        }
         if (!audioItem) {
           skippedCount += 1;
           updateBatchProgressItem(page.id, { captionStatus: 'skipped', message: 'No linked audio.' });
@@ -822,16 +892,25 @@ const App: React.FC = () => {
           const meta = await findAssetMetadata(audioItem.storageId);
           const file = await fileHandle.getFile();
           const { blob, mimeType } = await BinaryDecoder.decodeMedia(file, 'audio', meta?.mimeType);
-          const isGeneratedNarrationAudio = meta?.source === 'gemini-tts' || audioItem.source === 'gemini-tts' || (audioItem.title || '').startsWith('Narration:');
-          const caption = isGeneratedNarrationAudio && page.narration?.trim()
-            ? buildVttFromNarration(page.narration, await readAudioDurationSeconds(blob).catch(() => estimateNarrationDurationSeconds(page.narration)))
-            : await transcribeAudioToVTT(new File([blob], file.name, { type: mimeType || meta?.mimeType || 'audio/wav' }), aiSettings);
+          const caption = await transcribeAudioToVTT(new File([blob], file.name, { type: mimeType || meta?.mimeType || 'audio/wav' }), aiSettings);
           pagesById.set(page.id, { ...page, caption });
           captionCount += 1;
           updateBatchProgressItem(page.id, { captionStatus: 'done' });
         } catch (error: any) {
+          const quota = parseGeminiQuotaError(error, 'Batch Generate VTT');
+          if (quota.isQuotaError) {
+            recordGeminiQuotaEvent(quota);
+            updateBatchProgressDetails(page.id, {
+              captionStatus: 'error',
+              quotaPaused: true,
+              retryAfterSeconds: quota.retryAfterSeconds,
+              providerMessage: formatGeminiQuotaGuidance(quota),
+              message: 'Caption transcription quota hit. Add narration text for local VTT or paste captions manually.',
+            });
+            continue;
+          }
           updateBatchProgressItem(page.id, { captionStatus: 'error', message: error.message || String(error) });
-          throw error;
+          continue;
         }
       }
 
@@ -1243,6 +1322,7 @@ const App: React.FC = () => {
         onBatchGenerateCaptions={handleBatchGenerateCaptions}
         batchJob={batchJob}
         batchDisabled={!context.assetsHandle}
+        resumeTtsAvailable={batchProgress.some(item => item.quotaPaused || item.audioStatus === 'error' || item.audioStatus === 'pending')}
         onCreateNewCourse={() => {
           setNewCourseError(null);
           setNewCourseStatus(null);

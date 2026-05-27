@@ -14,10 +14,11 @@ interface SidebarProps {
   onBatchGenerateCaptions: () => Promise<void>;
   batchJob?: 'tts' | 'captions' | null;
   batchDisabled?: boolean;
+  resumeTtsAvailable?: boolean;
   hideTemplatePages?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse, onBatchGenerateTts, onBatchGenerateCaptions, batchJob = null, batchDisabled = false, hideTemplatePages = false }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNavigate, onSave, onOpenSettings, onCloseProject, onCreateNewCourse, onBatchGenerateTts, onBatchGenerateCaptions, batchJob = null, batchDisabled = false, resumeTtsAvailable = false, hideTemplatePages = false }) => {
   const isTopicActive = (id: string) => {
     return typeof currentView === 'object' && currentView.type === 'topic-edit' && currentView.id === id;
   };
@@ -133,7 +134,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
             className="w-full flex justify-center items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-100 px-4 py-2 rounded text-xs transition-colors disabled:opacity-50"
           >
             {batchJob === 'tts' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
-            Batch Generate TTS
+            {resumeTtsAvailable ? 'Resume Batch TTS' : 'Batch Generate TTS'}
           </button>
           <button
             onClick={onBatchGenerateCaptions}
@@ -144,7 +145,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
             Batch Generate VTT
           </button>
           <p className="text-[10px] text-slate-500 px-1">
-            TTS and VTT are course-wide tools. VTT uses linked narration audio.
+            Free-first TTS preserves existing audio. VTT is built locally from narration when possible.
           </p>
         </div>
         <button

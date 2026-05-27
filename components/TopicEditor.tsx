@@ -93,7 +93,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     const message = getErrorMessage(error);
     const lower = message.toLowerCase();
     if (lower.includes('quota exceeded') || lower.includes('resource_exhausted') || message.includes('"code":429')) {
-      return 'The current Gemini key has no usable free quota for this model. A fresh AI Studio key from another free project may help; otherwise this usually needs billing or a non-Gemini workaround.';
+      return 'Gemini quota was exhausted for the Google Cloud project behind this key, not just the key itself. Free-tier preview TTS/image quota is very limited; completed pages are saved and batch work can be resumed after quota resets.';
     }
     if (lower.includes('high demand') || lower.includes('unavailable') || message.includes('"code":503')) {
       return 'Gemini is temporarily overloaded. The app tried its fallbacks, but the backend is still unavailable.';
@@ -1212,23 +1212,32 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                 const audioDone = item.audioStatus === 'done';
                                 const captionDone = item.captionStatus === 'done';
                                 const isRunning = item.audioStatus === 'running' || item.captionStatus === 'running';
+                                const message = item.providerMessage || item.message;
                                 return (
-                                    <div key={item.pageId} className="flex items-center justify-between gap-2 text-xs">
-                                        <span className="truncate text-slate-700" title={item.title}>{item.title}</span>
-                                        <span className="flex items-center gap-2 shrink-0">
-                                            <span title={`Audio: ${item.audioStatus}`} className={audioDone ? 'text-green-600' : isRunning && item.audioStatus === 'running' ? 'text-blue-600' : 'text-slate-300'}>
-                                                {item.audioStatus === 'running' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
+                                    <div key={item.pageId} className={`rounded border p-2 text-xs ${item.quotaPaused ? 'border-amber-200 bg-amber-50' : 'border-transparent bg-slate-50'}`}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="truncate text-slate-700" title={item.title}>{item.title}</span>
+                                            <span className="flex items-center gap-2 shrink-0">
+                                                <span title={`Audio: ${item.audioStatus}`} className={audioDone ? 'text-green-600' : item.quotaPaused ? 'text-amber-600' : isRunning && item.audioStatus === 'running' ? 'text-blue-600' : 'text-slate-300'}>
+                                                    {item.audioStatus === 'running' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
+                                                </span>
+                                                <span title={`Captions: ${item.captionStatus}`} className={captionDone ? 'text-green-600' : item.quotaPaused ? 'text-amber-600' : isRunning && item.captionStatus === 'running' ? 'text-purple-600' : 'text-slate-300'}>
+                                                    {item.captionStatus === 'running' ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                                                </span>
                                             </span>
-                                            <span title={`Captions: ${item.captionStatus}`} className={captionDone ? 'text-green-600' : isRunning && item.captionStatus === 'running' ? 'text-purple-600' : 'text-slate-300'}>
-                                                {item.captionStatus === 'running' ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
-                                            </span>
-                                        </span>
+                                        </div>
+                                        {message && (
+                                            <div className={item.quotaPaused ? 'mt-1 text-[11px] text-amber-800' : 'mt-1 text-[11px] text-slate-500'}>
+                                                {message}
+                                                {item.retryAfterSeconds ? ` Retry after about ${item.retryAfterSeconds}s.` : ''}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
                         </div>
                     )}
-                    <p className="text-[10px] text-slate-500">Gemini TTS and VTT calls are throttled below 15 RPM. VTT requires linked audio on each page.</p>
+                    <p className="text-[10px] text-slate-500">Free-first mode preserves existing audio, caps new TTS calls, and builds VTT locally from narration when possible.</p>
                 </div>
             </div>
 
@@ -1732,8 +1741,8 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                       </div>
 
                       <div className="text-xs text-slate-600 space-y-2">
-                          <p>Add a new Gemini key in AI Settings. Runtime keys are now the default source for course generation, TTS, captions, and image generation.</p>
-                          <p>If the error says quota is zero for image generation, a new free project key may help temporarily, but Google may require billing for reliable image API access.</p>
+                          <p>Gemini quota is tracked per Google Cloud project. A second key from the same project usually shares the same exhausted quota.</p>
+                          <p>Use AI Settings to keep free-first mode, lower the TTS budget, preserve existing audio, or switch to paid Gemini if your project has billing quota.</p>
                       </div>
 
                       <button

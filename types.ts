@@ -183,6 +183,9 @@ export interface AISettings {
   geminiApiKey?: string;
   geminiFallbackApiKey?: string;
   allowBundledGeminiFallback?: boolean;
+  quotaMode?: 'free-first' | 'paid-gemini';
+  ttsDailyBudget?: number;
+  regenerateExistingAudio?: boolean;
   googleSearchApiKey?: string;
   googleSearchEngineId?: string;
   pixabayApiKey?: string;
@@ -225,4 +228,7 @@ export interface BatchProgressItem {
   audioStatus: BatchPageStatus;
   captionStatus: BatchPageStatus;
   message?: string;
+  quotaPaused?: boolean;
+  retryAfterSeconds?: number;
+  providerMessage?: string;
 }
