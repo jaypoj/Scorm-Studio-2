@@ -3,6 +3,7 @@ dist/
 .env
 .env.*
 !.env.example
+local.settings.json
 .DS_Store
 SCORM-example/
 SCORM-example.zip

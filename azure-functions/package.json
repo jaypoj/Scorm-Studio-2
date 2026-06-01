@@ -1,0 +1,11 @@
+{
+  "name": "scorm-studio-tts-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "func start"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

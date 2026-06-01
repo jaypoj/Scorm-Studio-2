@@ -53,6 +53,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
              <h3 className="text-sm font-semibold text-slate-800 mb-3">Azure OpenAI TTS</h3>
              <div className="space-y-3">
                  <div>
+                     <label className="block text-xs font-medium text-slate-700 mb-1">Azure TTS Proxy URL</label>
+                     <input
+                         type="url"
+                         value={localSettings.azureTtsProxyUrl || ''}
+                         onChange={(e) => setLocalSettings(prev => ({ ...prev, azureTtsProxyUrl: e.target.value }))}
+                         className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                         placeholder="https://your-function-app.azurewebsites.net/api/tts"
+                     />
+                     <p className="mt-1 text-[10px] text-slate-500">Preferred for production. The browser calls this proxy without seeing the Azure API key.</p>
+                 </div>
+                 <div>
                      <label className="block text-xs font-medium text-slate-700 mb-1">Azure OpenAI Endpoint</label>
                      <input
                          type="url"
@@ -74,12 +85,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                  </div>
                  <div className="grid grid-cols-2 gap-3">
                      <div>
-                         <label className="block text-xs font-medium text-slate-700 mb-1">TTS Model</label>
+                         <label className="block text-xs font-medium text-slate-700 mb-1">TTS Deployment / Model</label>
                          <input
                              value={localSettings.azureOpenAiTtsModel || 'gpt-4o-mini-tts'}
                              onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiTtsModel: e.target.value }))}
                              className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
                          />
+                         <p className="mt-1 text-[10px] text-slate-500">Use the exact Azure deployment name from IT.</p>
                      </div>
                      <div>
                          <label className="block text-xs font-medium text-slate-700 mb-1">API Version</label>
@@ -90,7 +102,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                          />
                      </div>
                  </div>
-                 <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">This stores the Azure key in this browser only, similar to the runtime Gemini key. Do not add the Azure key to GitHub Pages secrets or source files.</p>
+                 <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">Use the proxy URL when possible. The endpoint/key fields are only a browser fallback and store the Azure key in this browser, similar to the runtime Gemini key. Do not add the Azure key to GitHub Pages secrets or source files.</p>
                  <label className="flex items-start gap-3 p-3 rounded border border-slate-200 bg-slate-50">
                      <input
                          type="checkbox"

@@ -696,7 +696,10 @@ const App: React.FC = () => {
         ...project.courseContent.topics,
       ];
 
-  const isNarrationAudioMedia = (media: MediaItem) => media.type === 'audio' && !media.candidate && media.source !== 'powerpoint';
+  const isNarrationAudioMedia = (media: MediaItem) => {
+    if (media.type !== 'audio' || media.candidate || media.source === 'powerpoint') return false;
+    return media.source === 'azure-openai-tts' || media.source === 'gemini-tts' || (media.title || '').startsWith('Narration:');
+  };
 
   const buildBatchProgress = (pages: Array<Topic | WelcomePage | LearningObjectivesPage>): BatchProgressItem[] => pages.map(page => {
     const hasAudio = (page.media || []).some(isNarrationAudioMedia);
@@ -709,7 +712,7 @@ const App: React.FC = () => {
     };
   });
 
-  const updateBatchProgressItem = (pageId: string, patch: Partial<Pick<BatchProgressItem, 'audioStatus' | 'captionStatus' | 'message'>>) => {
+  const updateBatchProgressItem = (pageId: string, patch: Partial<BatchProgressItem>) => {
     setBatchProgress(prev => prev.map(item => item.pageId === pageId ? { ...item, ...patch } : item));
   };
 
@@ -796,6 +799,7 @@ const App: React.FC = () => {
       let generatedCount = 0;
       let skippedCount = 0;
       let existingAudioSkippedCount = 0;
+      let failedCount = 0;
       let quotaPaused = false;
       for (const page of pages) {
         if (!page.narration?.trim()) {
@@ -827,7 +831,12 @@ const App: React.FC = () => {
             });
             break;
           }
-          updateBatchProgressItem(page.id, { audioStatus: 'error', message: error.message || String(error) });
+          updateBatchProgressItem(page.id, {
+            audioStatus: 'error',
+            providerMessage: formatTtsErrorForUser(error, 'Batch Generate TTS'),
+            message: 'TTS provider error.',
+          });
+          failedCount += 1;
           continue;
         }
       }
@@ -836,6 +845,8 @@ const App: React.FC = () => {
         alert(`Batch TTS paused. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}. Completed pages were saved. Resume later after the provider retry window, or after IT raises the Azure OpenAI deployment quota.`);
       } else if (generatedCount === 0 && existingAudioSkippedCount > 0) {
         alert(`Batch TTS complete. No new audio was generated because ${existingAudioSkippedCount} page${existingAudioSkippedCount === 1 ? ' already has' : 's already have'} narration audio. Turn on "Regenerate existing narration audio" in AI Settings if you want to replace it.`);
+      } else if (failedCount > 0) {
+        alert(`Batch TTS finished with errors. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'}, skipped ${skippedCount}, and failed ${failedCount}. Open Batch Progress for the provider message on each failed page.`);
       } else {
         alert(`Batch TTS complete. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}.`);
       }

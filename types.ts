@@ -184,6 +184,7 @@ export interface AISettings {
   geminiFallbackApiKey?: string;
   allowBundledGeminiFallback?: boolean;
   regenerateExistingAudio?: boolean;
+  azureTtsProxyUrl?: string;
   azureOpenAiEndpoint?: string;
   azureOpenAiApiKey?: string;
   azureOpenAiTtsModel?: string;
