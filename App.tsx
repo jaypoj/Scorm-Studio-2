@@ -209,12 +209,8 @@ const App: React.FC = () => {
                  }) || null;
              }
 
-             // Auto-create assets folder if missing
-             if (!aHandle) {
-                 try {
-                     aHandle = await dirHandle.getDirectoryHandle('media', { create: true });
-                 } catch(e) { console.warn("Could not create assets folder"); }
-             }
+             // Opening a project should never create a fresh empty media folder.
+             // If no assets folder is found, keep the project read-only for media until the user selects the correct folder.
 
               const alreadyDiscovered = await Promise.all(discovered.map(item => item.projectHandle.isSameEntry?.(pHandle)));
               if (!alreadyDiscovered.some(Boolean)) {
