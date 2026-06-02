@@ -22,7 +22,7 @@ A Vite + React editor for SCORM course projects exported from Google AI Studio. 
 
 > Important: this is currently a browser-only Vite app, so any `VITE_*` key is embedded in the browser test build. Use restricted Google Cloud/API keys for development: limit HTTP referrers where practical, enable only the APIs needed, set quota limits, and rotate keys before production. For production, move Gemini/Search calls behind a server API proxy so secrets are never shipped to users.
 
-Azure OpenAI TTS should use the Azure Functions proxy in `azure-functions/` when available. The proxy stores the Azure API key in Function app settings and exposes only a browser-safe `/api/tts` endpoint. As a fallback, team members can paste the Azure endpoint and API key into AI Settings; those values are stored in that browser's local storage and are not committed or baked into GitHub Pages.
+Azure OpenAI TTS is configured at runtime in AI Settings. Team members paste the Azure endpoint and API key into the password-protected app; those values are stored in that browser's local storage and are not committed or baked into GitHub Pages.
 
 ### Key purpose
 
@@ -31,7 +31,6 @@ Azure OpenAI TTS should use the Azure Functions proxy in `azure-functions/` when
 | `VITE_GEMINI_API_KEY` | Yes for Gemini AI features | Gemini topic generation, distractors, research, image generation, uploaded-audio captions |
 | `VITE_GOOGLE_SEARCH_API_KEY` | Optional | YouTube Data API video search |
 | `VITE_PIXABAY_API_KEY` | Optional | Pixabay image search |
-| `VITE_AZURE_TTS_PROXY_URL` | Optional | Browser-safe Azure Function URL for TTS, for example `https://<app>.azurewebsites.net/api/tts` |
 
 Legacy AI Studio names (`GEMINI_API_KEY`, `GOOGLE_API_KEY`, `CUSTOM_GEMINI_API_KEY`) are also read by `vite.config.ts`, but new local work should use the `VITE_*` names above.
 
@@ -93,31 +92,7 @@ For UI testing, deploy without keys first. If you want AI features on the public
 
 > Warning: because GitHub Pages is static, these values are baked into browser JavaScript. Only use restricted, disposable test keys. Do not put production secrets in a static Pages build.
 
-For TTS on the public Pages app, deploy the Azure Function proxy first, then set `VITE_AZURE_TTS_PROXY_URL` or paste the proxy URL in AI Settings. Do not put the Azure OpenAI key in GitHub secrets, Vite variables, or source files.
-
-## Azure OpenAI TTS proxy
-
-The `azure-functions/` folder contains a small HTTP proxy at `POST /api/tts`. It protects the Azure API key, validates the 4096-character TTS input limit, and throttles requests per Function instance.
-
-Configure the Function app settings:
-
-```text
-AZURE_OPENAI_ENDPOINT=https://jstrungis-9161-resource.openai.azure.com/openai/v1
-AZURE_OPENAI_API_KEY=<rotated Azure key>
-AZURE_OPENAI_TTS_MODEL=gpt-4o-mini-tts
-AZURE_OPENAI_API_VERSION=preview
-AZURE_TTS_MAX_RPM=6
-AZURE_TTS_CONCURRENCY=1
-ALLOWED_ORIGINS=https://jaypoj.github.io
-```
-
-The proxy calls:
-
-```text
-https://jstrungis-9161-resource.openai.azure.com/openai/v1/audio/speech?api-version=preview
-```
-
-If IT created a custom Azure deployment name, set `AZURE_OPENAI_TTS_MODEL` to that exact deployment name.
+For TTS on the public Pages app, unlock the site, open AI Settings, and paste the Azure OpenAI endpoint and key there. Do not put the Azure OpenAI key in GitHub secrets or source files.
 
 ## Codex Cloud / forwarded-port preview
 

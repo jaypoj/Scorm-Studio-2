@@ -92,7 +92,7 @@ export const formatGeminiQuotaGuidance = (event: GeminiQuotaEvent) => {
     event.model ? `Model: ${event.model}.` : '',
     event.quotaLimit ? `Observed limit: ${event.quotaLimit} request${event.quotaLimit === 1 ? '' : 's'}.` : '',
     event.retryAfterSeconds ? `Google suggested retrying after about ${event.retryAfterSeconds} seconds.` : '',
-    event.isFreeTierProjectQuota ? 'Free-tier Gemini image/transcription models are especially limited; completed pages were saved and the batch can be resumed later.' : 'Completed pages were saved and the batch can be resumed later.',
+    event.isFreeTierProjectQuota ? 'Free-tier TTS/image models are especially limited; completed pages were saved and the batch can be resumed later.' : 'Completed pages were saved and the batch can be resumed later.',
   ].filter(Boolean);
   return pieces.join(' ');
 };

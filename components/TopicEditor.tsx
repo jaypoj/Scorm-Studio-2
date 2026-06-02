@@ -109,8 +109,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   };
 
   const recordAiFailure = (action: string, error: unknown) => {
-    const isTtsAction = action.toLowerCase().includes('text-to-speech');
-    const message = `${getFriendlyAiFailureMessage(error)}\n\n${isTtsAction ? formatTtsErrorForUser(error, action) : formatGeminiErrorForUser(error, action)}`;
+    const message = `${getFriendlyAiFailureMessage(error)}\n\n${formatGeminiErrorForUser(error, action)}`;
     setLastAiFailure({ action, message });
     if (!isBackendOrQuotaFailure(error)) return false;
 
@@ -308,10 +307,6 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   // Combine Props Data + Smart Discovery Data
   const allMedia = [...(data.media || []), ...discoveredMedia];
   const isNarrationAudio = (media: MediaItem) => getMediaType(media) === 'audio' && !media.candidate && media.source !== 'powerpoint';
-  const isGeneratedNarrationAudio = (media: MediaItem) => {
-    if (!isNarrationAudio(media)) return false;
-    return media.source === 'azure-openai-tts' || media.source === 'gemini-tts' || (media.title || '').startsWith('Narration:');
-  };
   const visualMedia = allMedia.filter(m => !m.candidate && ['image', 'video'].includes(getMediaType(m)));
   const featuredAudio = allMedia.find(isNarrationAudio);
   const hasPowerPointNotes = 'notes' in data && typeof (data as Topic).notes === 'string';
@@ -687,7 +682,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       onChange({
         ...data,
         media: [
-          ...(data.media || []).filter(media => !isGeneratedNarrationAudio(media)),
+          ...(data.media || []).filter(media => !isNarrationAudio(media)),
           newMedia
         ]
       });
