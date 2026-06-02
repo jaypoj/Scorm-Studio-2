@@ -165,3 +165,22 @@ export async function generateNarrationAudio(
 
   return response.blob();
 }
+
+export async function testNarrationAudioSettings(settings: AISettings): Promise<{
+  message: string;
+  sizeBytes: number;
+}> {
+  const blob = await generateNarrationAudio(
+    settings,
+    'Azure OpenAI text to speech settings test.',
+    {
+      ...DEFAULT_TTS_SETTINGS,
+      styleInstructions: 'Read this short settings test clearly and neutrally.',
+    },
+    []
+  );
+  return {
+    message: 'Azure OpenAI TTS settings worked. Test audio was generated successfully.',
+    sizeBytes: blob.size,
+  };
+}

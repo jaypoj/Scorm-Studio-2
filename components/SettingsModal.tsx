@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AISettings } from '../types';
-import { Settings, Save, X, Cpu } from 'lucide-react';
+import { Settings, Save, X, Cpu, Loader2, Volume2 } from 'lucide-react';
 import { GEMINI_MODEL_OPTIONS } from '../constants';
+import { formatTtsErrorForUser, testNarrationAudioSettings } from '../services/ttsService';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -12,10 +13,32 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onSave }) => {
   const [localSettings, setLocalSettings] = useState<AISettings>(settings);
+  const [ttsTestStatus, setTtsTestStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isTestingTts, setIsTestingTts] = useState(false);
 
   useEffect(() => {
     setLocalSettings(settings);
+    setTtsTestStatus(null);
   }, [settings, isOpen]);
+
+  const testAzureTts = async () => {
+    setIsTestingTts(true);
+    setTtsTestStatus(null);
+    try {
+      const result = await testNarrationAudioSettings(localSettings);
+      setTtsTestStatus({
+        type: 'success',
+        message: `${result.message} Received ${Math.round(result.sizeBytes / 1024)} KB of WAV audio.`,
+      });
+    } catch (error) {
+      setTtsTestStatus({
+        type: 'error',
+        message: formatTtsErrorForUser(error, 'Azure TTS settings test'),
+      });
+    } finally {
+      setIsTestingTts(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -33,10 +56,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
         </div>
 
         <div className="space-y-6 overflow-y-auto p-6">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-900">
+            <p className="font-bold mb-1">Narration audio uses Azure OpenAI TTS.</p>
+            <p>The Gemini model dropdown below is only for non-TTS features like course text, images, research, and uploaded-audio captions.</p>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
                 <Cpu className="w-4 h-4" />
-                Default Model
+                Gemini Model for Non-TTS AI
             </label>
             <select
               value={localSettings.model}
@@ -47,6 +75,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                     <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
             </select>
+            <p className="mt-1 text-[10px] text-slate-500">Does not affect narration audio. TTS uses the Azure OpenAI settings below.</p>
           </div>
 
           <div className="pt-2 border-t border-slate-200">
@@ -103,6 +132,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                      </div>
                  </div>
                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">Use the proxy URL when possible. The endpoint/key fields are only a browser fallback and store the Azure key in this browser, similar to the runtime Gemini key. Do not add the Azure key to GitHub Pages secrets or source files.</p>
+                 <div className="rounded border border-slate-200 bg-slate-50 p-3 space-y-2">
+                     <button
+                         type="button"
+                         onClick={testAzureTts}
+                         disabled={isTestingTts}
+                         className="w-full py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white rounded text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                     >
+                         {isTestingTts ? <Loader2 className="w-4 h-4 animate-spin" /> : <Volume2 className="w-4 h-4" />}
+                         {isTestingTts ? 'Testing Azure TTS...' : 'Test Azure TTS Settings'}
+                     </button>
+                     {ttsTestStatus && (
+                         <div className={`text-[11px] rounded border p-2 leading-relaxed whitespace-pre-wrap ${ttsTestStatus.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-red-200 bg-red-50 text-red-900'}`}>
+                             {ttsTestStatus.message}
+                         </div>
+                     )}
+                 </div>
                  <label className="flex items-start gap-3 p-3 rounded border border-slate-200 bg-slate-50">
                      <input
                          type="checkbox"
@@ -119,7 +164,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           </div>
 
           <div className="pt-2 border-t border-slate-200">
-             <h3 className="text-sm font-semibold text-slate-800 mb-3">Gemini Key Control</h3>
+             <h3 className="text-sm font-semibold text-slate-800 mb-3">Gemini Keys for Non-TTS Features</h3>
              <div className="bg-blue-50 text-blue-900 border border-blue-200 text-xs p-3 rounded mb-4">
                  <p className="font-bold mb-1">Runtime Gemini keys are now the default source for AI calls.</p>
                  <p>
