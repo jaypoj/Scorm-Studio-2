@@ -696,8 +696,10 @@ const App: React.FC = () => {
         ...project.courseContent.topics,
       ];
 
-  const isNarrationAudioMedia = (media: MediaItem) => {
-    if (media.type !== 'audio' || media.candidate || media.source === 'powerpoint') return false;
+  const isNarrationAudioMedia = (media: MediaItem) => media.type === 'audio' && !media.candidate && media.source !== 'powerpoint';
+
+  const isGeneratedNarrationAudioMedia = (media: MediaItem) => {
+    if (!isNarrationAudioMedia(media)) return false;
     return media.source === 'azure-openai-tts' || media.source === 'gemini-tts' || (media.title || '').startsWith('Narration:');
   };
 
@@ -764,7 +766,7 @@ const App: React.FC = () => {
       url: '',
       source: 'azure-openai-tts'
     };
-    return { ...page, media: [...(page.media || []).filter(media => !isNarrationAudioMedia(media)), newMedia] };
+    return { ...page, media: [...(page.media || []).filter(media => !isGeneratedNarrationAudioMedia(media)), newMedia] };
   };
 
   const findAssetFile = async (storageId: string) => {

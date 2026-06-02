@@ -307,8 +307,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   // Combine Props Data + Smart Discovery Data
   const allMedia = [...(data.media || []), ...discoveredMedia];
-  const isNarrationAudio = (media: MediaItem) => {
-    if (getMediaType(media) !== 'audio' || media.candidate || media.source === 'powerpoint') return false;
+  const isNarrationAudio = (media: MediaItem) => getMediaType(media) === 'audio' && !media.candidate && media.source !== 'powerpoint';
+  const isGeneratedNarrationAudio = (media: MediaItem) => {
+    if (!isNarrationAudio(media)) return false;
     return media.source === 'azure-openai-tts' || media.source === 'gemini-tts' || (media.title || '').startsWith('Narration:');
   };
   const visualMedia = allMedia.filter(m => !m.candidate && ['image', 'video'].includes(getMediaType(m)));
@@ -686,7 +687,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       onChange({
         ...data,
         media: [
-          ...(data.media || []).filter(media => !isNarrationAudio(media)),
+          ...(data.media || []).filter(media => !isGeneratedNarrationAudio(media)),
           newMedia
         ]
       });
