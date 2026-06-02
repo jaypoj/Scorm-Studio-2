@@ -35,6 +35,7 @@ const decodeHtml = (value: string) => value
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'aac', 'ogg']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'm4v', 'ogv']);
+const IMPORTABLE_MEDIA_TYPES = new Set(['image', 'audio', 'video']);
 
 const mimeTypeForExtension = (extension: string) => {
   switch (extension) {
@@ -56,6 +57,48 @@ const mimeTypeForExtension = (extension: string) => {
     case 'ogv': return 'video/ogg';
     default: return 'application/octet-stream';
   }
+};
+
+const extensionForMimeType = (mimeType: string, fallbackExtension: string) => {
+  switch (mimeType) {
+    case 'image/png': return 'png';
+    case 'image/jpeg': return 'jpg';
+    case 'image/gif': return 'gif';
+    case 'image/webp': return 'webp';
+    case 'image/svg+xml': return 'svg';
+    case 'audio/mpeg': return 'mp3';
+    case 'audio/wav': return 'wav';
+    case 'audio/mp4': return 'm4a';
+    case 'audio/ogg': return 'ogg';
+    case 'video/mp4': return 'mp4';
+    case 'video/webm': return 'webm';
+    case 'video/quicktime': return 'mov';
+    case 'video/ogg': return 'ogv';
+    default: return fallbackExtension || 'bin';
+  }
+};
+
+const inferMimeTypeFromBlob = async (
+  blob: Blob,
+  expectedType: 'image' | 'audio' | 'video',
+  fallbackExtension: string,
+) => {
+  const extensionMime = mimeTypeForExtension(fallbackExtension);
+  if (extensionMime !== 'application/octet-stream') return extensionMime;
+
+  const header = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  const ascii = Array.from(header).map(byte => String.fromCharCode(byte)).join('');
+  if (header[0] === 0xff && header[1] === 0xd8) return 'image/jpeg';
+  if (header[0] === 0x89 && ascii.slice(1, 4) === 'PNG') return 'image/png';
+  if (ascii.startsWith('GIF8')) return 'image/gif';
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WEBP') return 'image/webp';
+  if (ascii.trimStart().startsWith('<svg')) return 'image/svg+xml';
+  if (header[0] === 0x49 && header[1] === 0x44 && header[2] === 0x33) return 'audio/mpeg';
+  if (ascii.startsWith('RIFF') && ascii.slice(8, 12) === 'WAVE') return 'audio/wav';
+  if (ascii.slice(4, 8) === 'ftyp') return expectedType === 'audio' ? 'audio/mp4' : 'video/mp4';
+  if (expectedType === 'image') return 'image/png';
+  if (expectedType === 'audio') return 'audio/wav';
+  return 'video/mp4';
 };
 
 const createZipReader = async (file: File): Promise<PackageReader> => {
@@ -184,6 +227,237 @@ const ensureUniqueStorageId = (desired: string, seen: Set<string>) => {
   return candidate;
 };
 
+const findMediaPathForStorageId = (
+  reader: PackageReader,
+  storageId: string,
+  type: 'image' | 'audio' | 'video',
+  preferredPath?: string,
+) => {
+  const candidates = reader.listPaths()
+    .map(normalizePath)
+    .filter(path => path.toLowerCase().startsWith('media/'));
+  const normalizedPreferred = preferredPath ? normalizePath(preferredPath) : '';
+  if (normalizedPreferred && reader.has(normalizedPreferred)) return normalizedPreferred;
+
+  const normalizedStorageId = storageId.toLowerCase();
+  const exactStem = candidates.find(path => stemOf(path).toLowerCase() === normalizedStorageId);
+  if (exactStem) return exactStem;
+
+  const extensions = type === 'image' ? IMAGE_EXTENSIONS : type === 'audio' ? AUDIO_EXTENSIONS : VIDEO_EXTENSIONS;
+  return candidates.find(path => {
+    const lowerStem = stemOf(path).toLowerCase();
+    const extension = extensionOf(path);
+    return lowerStem === normalizedStorageId && (extensions.has(extension) || extension === 'octet-stream' || extension === 'bin');
+  }) || null;
+};
+
+const createImportedMediaFile = async (
+  reader: PackageReader,
+  sourcePath: string,
+  storageId: string,
+  pageId: string,
+  type: 'image' | 'audio' | 'video',
+  title: string,
+  warnings: string[],
+): Promise<ImportedProjectMediaFile | null> => {
+  const normalizedPath = normalizePath(sourcePath);
+  const blob = await reader.readBlob(normalizedPath);
+  if (!blob) {
+    warnings.push(`Missing media file: ${normalizedPath}`);
+    return null;
+  }
+
+  const sourceExtension = extensionOf(normalizedPath);
+  const mimeType = await inferMimeTypeFromBlob(blob, type, sourceExtension);
+  const extension = extensionForMimeType(mimeType, sourceExtension);
+  const file = new File([blob], `${storageId}.${extension}`, { type: mimeType });
+
+  return {
+    file,
+    storageId,
+    pageId,
+    type,
+    title,
+    source: 'legacy-scorm',
+    originalName: basename(normalizedPath),
+  };
+};
+
+const normalizeProjectMedia = (media: MediaItem[] | undefined): MediaItem[] => {
+  const seen = new Set<string>();
+  return (media || [])
+    .filter(item => IMPORTABLE_MEDIA_TYPES.has(item.type))
+    .map(item => ({
+      ...item,
+      id: item.id || item.storageId,
+      storageId: item.storageId || item.id,
+      source: item.source || 'legacy-scorm',
+      candidate: Boolean(item.candidate),
+      url: item.url?.startsWith('scorm-media://') ? '' : item.url,
+    }))
+    .filter(item => {
+      if (!item.storageId || seen.has(item.storageId)) return false;
+      seen.add(item.storageId);
+      return true;
+    });
+};
+
+const normalizePageCaptions = (
+  page: CourseContent['welcomePage'] | CourseContent['learningObjectivesPage'] | Topic,
+) => {
+  const captionItem = (page.media || []).find(item => item.type === 'caption' && item.content);
+  return {
+    ...page,
+    caption: page.caption || captionItem?.content,
+    media: normalizeProjectMedia(page.media),
+  };
+};
+
+const findPageHtmlPath = (reader: PackageReader, pageId: string) => {
+  const paths = reader.listPaths().map(normalizePath);
+  const candidates = [
+    `pages/${pageId}.html`,
+    pageId === 'learning-objectives' ? 'pages/objectives.html' : '',
+    pageId === 'objectives' ? 'pages/learning-objectives.html' : '',
+  ].filter(Boolean);
+  return candidates.find(path => reader.has(path))
+    || paths.find(path => path.toLowerCase() === `pages/${pageId.toLowerCase()}.html`)
+    || null;
+};
+
+const extractLocalMediaSourcesFromHtml = (html: string) => {
+  const doc = getParser().parseFromString(html, 'text/html');
+  const nodes = Array.from(doc.querySelectorAll('img[src], video[src], video source[src], iframe[src]'));
+  return nodes.map(node => {
+    const src = (node as HTMLElement).getAttribute('src')?.trim() || '';
+    if (!src || /^https?:\/\//i.test(src) || src.startsWith('//')) return null;
+    const tagName = node.tagName.toLowerCase() === 'source' ? node.parentElement?.tagName || node.tagName : node.tagName;
+    const type = inferMediaType(src, tagName);
+    return {
+      src: normalizePath(src),
+      type,
+      title: (node as HTMLImageElement).getAttribute('alt') || basename(src),
+    };
+  }).filter(Boolean) as Array<{ src: string; type: 'image' | 'video'; title: string }>;
+};
+
+const extractCaptionFromHtml = async (doc: Document, reader: PackageReader) => {
+  const trackSrc = doc.querySelector('audio track[src], video track[src]')?.getAttribute('src')?.trim();
+  if (!trackSrc || /^https?:\/\//i.test(trackSrc) || trackSrc.startsWith('//')) return '';
+  return await reader.readText(normalizePath(trackSrc)) || '';
+};
+
+const importProjectJsonMedia = async (
+  reader: PackageReader,
+  courseContent: CourseContent,
+  mediaFiles: ImportedProjectMediaFile[],
+  warnings: string[],
+) => {
+  const addedStorageIds = new Set<string>();
+  const addMediaFile = async (
+    pageId: string,
+    media: MediaItem,
+    preferredPath?: string,
+  ) => {
+    if (!IMPORTABLE_MEDIA_TYPES.has(media.type) || addedStorageIds.has(media.storageId)) return;
+    const type = media.type as 'image' | 'audio' | 'video';
+    const mediaPath = findMediaPathForStorageId(reader, media.storageId, type, preferredPath);
+    if (!mediaPath) {
+      warnings.push(`Could not find a media file for ${media.storageId}.`);
+      return;
+    }
+    const imported = await createImportedMediaFile(
+      reader,
+      mediaPath,
+      media.storageId,
+      pageId,
+      type,
+      media.title || `Imported ${type}`,
+      warnings,
+    );
+    if (imported) {
+      mediaFiles.push(imported);
+      addedStorageIds.add(media.storageId);
+    }
+  };
+
+  const pages: Array<{ pageId: string; page: CourseContent['welcomePage'] | CourseContent['learningObjectivesPage'] | Topic }> = [
+    { pageId: courseContent.welcomePage.id || 'welcome', page: courseContent.welcomePage },
+    { pageId: courseContent.learningObjectivesPage.id || 'learning-objectives', page: courseContent.learningObjectivesPage },
+    ...courseContent.topics.map(topic => ({ pageId: topic.id, page: topic })),
+  ];
+
+  for (const { pageId, page } of pages) {
+    for (const media of page.media || []) {
+      await addMediaFile(pageId, media);
+    }
+
+    const htmlPath = findPageHtmlPath(reader, pageId);
+    if (!htmlPath) continue;
+    const html = await reader.readText(htmlPath);
+    if (!html) continue;
+    for (const source of extractLocalMediaSourcesFromHtml(html)) {
+      const storageId = stemOf(source.src);
+      if (!storageId || (page.media || []).some(media => media.storageId === storageId)) continue;
+      const mediaItem: MediaItem = {
+        id: storageId,
+        storageId,
+        type: source.type,
+        title: source.title,
+        source: 'legacy-scorm',
+      };
+      page.media = [...(page.media || []), mediaItem];
+      await addMediaFile(pageId, mediaItem, source.src);
+    }
+  }
+};
+
+const importFromProjectJson = async (
+  reader: PackageReader,
+  projectJson: string,
+  sourceTitle: string,
+  courseNameOverride: string | undefined,
+  onProgress?: LegacyScormImportProgress,
+): Promise<ImportedLegacyScormCourse | null> => {
+  let project: ScormProject | null = null;
+  try {
+    project = JSON.parse(projectJson) as ScormProject;
+  } catch {
+    return null;
+  }
+  if (!project?.courseContent?.welcomePage || !project.courseContent.learningObjectivesPage || !Array.isArray(project.courseContent.topics)) {
+    return null;
+  }
+
+  onProgress?.(18, 'Reading exported project data...');
+  const courseContent: CourseContent = {
+    ...project.courseContent,
+    welcomePage: normalizePageCaptions(project.courseContent.welcomePage),
+    learningObjectivesPage: normalizePageCaptions(project.courseContent.learningObjectivesPage),
+    topics: project.courseContent.topics.map(topic => normalizePageCaptions(topic)),
+    assessment: project.courseContent.assessment || { narration: null, passMark: 80, questions: [] },
+    lastModified: new Date().toISOString(),
+  };
+
+  const mediaFiles: ImportedProjectMediaFile[] = [];
+  const warnings: string[] = [];
+  onProgress?.(45, 'Recovering imported media files...');
+  await importProjectJsonMedia(reader, courseContent, mediaFiles, warnings);
+
+  const finalCourseName = courseNameOverride?.trim() || project.courseData?.title || project.project?.name || sourceTitle;
+  return {
+    courseContent,
+    topics: courseContent.topics.map(topic => topic.title),
+    mediaFiles,
+    warnings,
+    scormConfigPatch: {
+      ...(project.scormConfig || {}),
+      contentMode: 'standard',
+    },
+    sourceTitle: finalCourseName,
+  };
+};
+
 const parseQuestions = (scope: ParentNode, containerSelector: string, questionSelector: string): Question[] => {
   const container = scope.querySelector(containerSelector);
   if (!container) return [];
@@ -232,7 +506,9 @@ const extractLocalMedia = async (
     }
     const extension = extensionOf(normalizedSrc);
     const storageId = ensureUniqueStorageId(stemOf(normalizedSrc) || `${pageId}-${type}`, seenStorageIds);
-    const file = new File([blob], `${storageId}.${extension || 'bin'}`, { type: mimeTypeForExtension(extension) });
+    const mimeType = await inferMimeTypeFromBlob(blob, type, extension);
+    const fileExtension = extensionForMimeType(mimeType, extension);
+    const file = new File([blob], `${storageId}.${fileExtension}`, { type: mimeType });
     mediaFiles.push({
       file,
       storageId,
@@ -252,11 +528,15 @@ const extractLocalMedia = async (
   };
 
   const mediaContainer = doc.querySelector('.media-container');
-  if (mediaContainer) {
-    const visualNodes = Array.from(mediaContainer.querySelectorAll('img[src], video[src], iframe[src], source[src]'));
+  const mediaScopes = Array.from(doc.querySelectorAll('.media-container, .top-media-layout, .visual-media-strip, .content-column'));
+  const visualScopes = mediaScopes.length ? mediaScopes : [doc];
+  const handledVisualSources = new Set<string>();
+  for (const mediaScope of visualScopes) {
+    const visualNodes = Array.from(mediaScope.querySelectorAll('img[src], video[src], video source[src], iframe[src]'));
     for (const node of visualNodes) {
       const src = (node as HTMLImageElement).getAttribute('src')?.trim();
-      if (!src) continue;
+      if (!src || handledVisualSources.has(src)) continue;
+      handledVisualSources.add(src);
       if (/^https?:\/\//i.test(src) || src.startsWith('//')) {
         mediaItems.push({
           id: `external-${pageId}-${mediaItems.length}`,
@@ -274,7 +554,7 @@ const extractLocalMedia = async (
     }
   }
 
-  const audioNode = doc.querySelector('audio[src]');
+  const audioNode = doc.querySelector('audio[src], audio source[src]');
   if (audioNode) {
     const src = audioNode.getAttribute('src')?.trim();
     if (src) {
@@ -322,11 +602,15 @@ const parsePage = async (
   let caption = '';
   let narration = '';
   if (captionFile) {
-    const captionText = await reader.readText(captionFile);
+    const captionText = await reader.readText(normalizePath(captionFile));
     if (captionText) {
       caption = captionText;
       narration = vttToPlainText(captionText);
     }
+  }
+  if (!caption) {
+    caption = await extractCaptionFromHtml(doc, reader);
+    if (caption) narration = vttToPlainText(caption);
   }
   if (!narration) {
     narration = decodeHtml((doc.querySelector('.topic-text')?.textContent || doc.querySelector('.welcome-content')?.textContent || '').replace(/\s+/g, ' ').trim());
@@ -367,6 +651,12 @@ const importFromReader = async (
   const manifestXml = await reader.readText('imsmanifest.xml');
   if (!manifestXml) throw new Error('Could not read imsmanifest.xml from the legacy package.');
   const sourceTitle = parseManifestTitle(manifestXml);
+  const projectJson = await reader.readText('project.json');
+  if (projectJson) {
+    const importedProject = await importFromProjectJson(reader, projectJson, sourceTitle, courseNameOverride, onProgress);
+    if (importedProject) return importedProject;
+  }
+
   const navigationJs = await reader.readText('scripts/navigation.js');
   const pagePaths = reader.listPaths()
     .filter(path => /^pages\/.+\.html$/i.test(path))
