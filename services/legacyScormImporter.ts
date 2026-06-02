@@ -19,8 +19,24 @@ type PackageReader = {
   readBlob(path: string): Promise<Blob | null>;
 };
 
-const normalizePath = (value: string) => value.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/');
+const normalizePath = (value: string) => {
+  const parts = value.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/').split('/');
+  const normalized: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      normalized.pop();
+      continue;
+    }
+    normalized.push(part);
+  }
+  return normalized.join('/');
+};
 const basename = (value: string) => normalizePath(value).split('/').pop() || value;
+const dirname = (value: string) => {
+  const normalized = normalizePath(value);
+  return normalized.includes('/') ? normalized.replace(/\/[^/]*$/, '') : '';
+};
 const extensionOf = (value: string) => basename(value).split('.').pop()?.toLowerCase() || '';
 const stemOf = (value: string) => basename(value).replace(/\.[^.]+$/, '');
 const escapeHtml = (value: string) => value.replace(/[<>&"']/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[ch]!));
@@ -215,6 +231,7 @@ const parseQuestions = (scope: ParentNode, containerSelector: string, questionSe
 
 const extractLocalMedia = async (
   doc: Document,
+  pagePath: string,
   pageId: string,
   pageTitle: string,
   reader: PackageReader,
@@ -223,13 +240,30 @@ const extractLocalMedia = async (
   seenStorageIds: Set<string>,
   warnings: string[],
 ) => {
-  const addLocalFile = async (src: string, type: 'image' | 'audio' | 'video', title: string) => {
+  const resolveMediaBlob = async (src: string) => {
     const normalizedSrc = normalizePath(src);
-    const blob = await reader.readBlob(normalizedSrc);
+    const pageDir = dirname(pagePath);
+    const candidates = Array.from(new Set([
+      normalizedSrc,
+      normalizedSrc.replace(/^(\.\.\/)+/, ''),
+      pageDir ? normalizePath(`${pageDir}/${normalizedSrc}`) : '',
+      pageDir ? normalizePath(`${pageDir}/${normalizedSrc}`).replace(/^(\.\.\/)+/, '') : '',
+    ].filter(Boolean)));
+    for (const candidate of candidates) {
+      const blob = await reader.readBlob(candidate);
+      if (blob) return { blob, path: candidate };
+    }
+    return { blob: null, path: normalizedSrc };
+  };
+
+  const addLocalFile = async (src: string, type: 'image' | 'audio' | 'video', title: string) => {
+    const resolved = await resolveMediaBlob(src);
+    const blob = resolved.blob;
     if (!blob) {
-      warnings.push(`Missing media file: ${normalizedSrc}`);
+      warnings.push(`Missing media file: ${resolved.path}`);
       return;
     }
+    const normalizedSrc = resolved.path;
     const extension = extensionOf(normalizedSrc);
     const storageId = ensureUniqueStorageId(stemOf(normalizedSrc) || `${pageId}-${type}`, seenStorageIds);
     const file = new File([blob], `${storageId}.${extension || 'bin'}`, { type: mimeTypeForExtension(extension) });
@@ -251,12 +285,22 @@ const extractLocalMedia = async (
     });
   };
 
-  const mediaContainer = doc.querySelector('.media-container');
-  if (mediaContainer) {
-    const visualNodes = Array.from(mediaContainer.querySelectorAll('img[src], video[src], iframe[src], source[src]'));
+  const visualContainers = Array.from(doc.querySelectorAll([
+    '.media-container',
+    '.top-media-layout',
+    '.visual-media-strip',
+    '.media-frame',
+    '.video-frame',
+    '.content-container',
+  ].join(',')));
+  const visualScope = visualContainers.length ? visualContainers : [doc.body];
+  const seenSources = new Set<string>();
+  for (const container of visualScope) {
+    const visualNodes = Array.from(container.querySelectorAll('img[src], video[src], iframe[src], source[src]'));
     for (const node of visualNodes) {
       const src = (node as HTMLImageElement).getAttribute('src')?.trim();
-      if (!src) continue;
+      if (!src || seenSources.has(src)) continue;
+      seenSources.add(src);
       if (/^https?:\/\//i.test(src) || src.startsWith('//')) {
         mediaItems.push({
           id: `external-${pageId}-${mediaItems.length}`,
@@ -274,10 +318,12 @@ const extractLocalMedia = async (
     }
   }
 
-  const audioNode = doc.querySelector('audio[src]');
-  if (audioNode) {
+  const audioNodes = Array.from(doc.querySelectorAll('audio[src], audio source[src]'));
+  for (const audioNode of audioNodes) {
     const src = audioNode.getAttribute('src')?.trim();
+    if (src && seenSources.has(src)) continue;
     if (src) {
+      seenSources.add(src);
       if (/^https?:\/\//i.test(src) || src.startsWith('//')) {
         mediaItems.push({
           id: `external-audio-${pageId}`,
@@ -296,6 +342,7 @@ const extractLocalMedia = async (
 
 const parsePage = async (
   pageId: string,
+  pagePath: string,
   html: string,
   reader: PackageReader,
   mediaFiles: ImportedProjectMediaFile[],
@@ -333,7 +380,7 @@ const parsePage = async (
   }
 
   const media: MediaItem[] = [];
-  await extractLocalMedia(doc, pageId, title, reader, mediaFiles, media, seenStorageIds, warnings);
+  await extractLocalMedia(doc, pagePath, pageId, title, reader, mediaFiles, media, seenStorageIds, warnings);
 
   const knowledgeQuestions = parseQuestions(doc, '.knowledge-check-container', '.kc-question-wrapper');
 
@@ -406,7 +453,7 @@ const importFromReader = async (
       continue;
     }
 
-    const parsed = await parsePage(pageId, pageHtml, reader, mediaFiles, seenStorageIds, warnings);
+    const parsed = await parsePage(pageId, pagePath, pageHtml, reader, mediaFiles, seenStorageIds, warnings);
     if (pageId === 'welcome') {
       welcomePage = {
         id: 'welcome',

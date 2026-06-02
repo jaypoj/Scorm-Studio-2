@@ -911,24 +911,11 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   };
 
   const handleDeleteMedia = async (mediaId: string, storageId: string) => {
-      const isConfirmed = window.confirm("Are you sure you want to delete this media asset?");
+      const isConfirmed = window.confirm("Remove this media from the current page?\n\nThe file will remain in the media folder so existing projects cannot lose saved assets.");
       if (!isConfirmed) return;
       
       const newMedia = (data.media || []).filter(m => m.id !== mediaId);
       onChange({ ...data, media: newMedia });
-      
-      if (assetsHandle) {
-          try {
-              // @ts-ignore
-              for await (const entry of assetsHandle.values()) {
-                  if (entry.name.startsWith(storageId)) {
-                      await assetsHandle.removeEntry(entry.name);
-                  }
-              }
-          } catch (e) {
-              console.log("Could not entirely delete asset files from file system. They are detached though.");
-          }
-      }
   };
 
   const handleGenerateDistractors = async (index: number, q: Question) => {
