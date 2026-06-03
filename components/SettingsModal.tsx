@@ -63,8 +63,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                          value={localSettings.azureOpenAiEndpoint || ''}
                          onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiEndpoint: e.target.value }))}
                          className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                         placeholder="https://your-resource.services.ai.azure.com"
+                         placeholder="https://your-resource.openai.azure.com"
                      />
+                     <p className="mt-1 text-[11px] text-slate-500">Use the Azure OpenAI endpoint. A copied URL ending in /openai/v1 is also OK.</p>
                  </div>
                  <div>
                      <label className="block text-xs font-medium text-slate-700 mb-1">Azure OpenAI API Key</label>
@@ -78,12 +79,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                  </div>
                  <div className="grid grid-cols-2 gap-3">
                      <div>
-                         <label className="block text-xs font-medium text-slate-700 mb-1">TTS Model</label>
+                         <label className="block text-xs font-medium text-slate-700 mb-1">TTS Model / Deployment</label>
                          <input
                              value={localSettings.azureOpenAiTtsModel || 'gpt-4o-mini-tts'}
                              onChange={(e) => setLocalSettings(prev => ({ ...prev, azureOpenAiTtsModel: e.target.value }))}
                              className="w-full p-2 text-sm bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
                          />
+                         <p className="mt-1 text-[11px] text-slate-500">Use the deployment name if IT named it differently.</p>
                      </div>
                      <div>
                          <label className="block text-xs font-medium text-slate-700 mb-1">API Version</label>
