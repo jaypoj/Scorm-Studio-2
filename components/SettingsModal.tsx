@@ -20,19 +20,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
-        <div className="flex justify-between items-center mb-6">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 overflow-y-auto p-4 sm:p-6">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="flex justify-between items-center gap-4 p-6 pb-4 border-b border-slate-200 flex-shrink-0">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Settings className="w-5 h-5 text-slate-600" />
             AI Settings
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-600 rounded-full p-1 -m-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            aria-label="Close AI settings"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-6 overflow-y-auto p-6 pt-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
                 <Cpu className="w-4 h-4" />
@@ -199,7 +203,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                 onSave(localSettings);
                 onClose();
             }}
-            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium flex items-center justify-center gap-2 transition-colors"
+            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium flex items-center justify-center gap-2 transition-colors sticky bottom-0"
           >
             <Save className="w-4 h-4" />
             Save Settings
