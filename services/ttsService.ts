@@ -69,7 +69,7 @@ const parseAzureEndpoint = (settings: Pick<AISettings, 'azureOpenAiEndpoint' | '
     : '';
   const resourceRoot = `${url.origin}${resourceRootPath}`;
   const v1Base = openAiV1Index >= 0
-    ? `${url.origin}${path.slice(0, openAiV1Index + '/openai/v1'.length)}`
+    ? `${resourceRoot}/openai/v1`
     : isProjectEndpoint
       ? `${url.origin}${path}/openai/v1`
       : `${resourceRoot}/openai/v1`;
