@@ -11,6 +11,8 @@ type TtsErrorDetails = {
   retryAfterSeconds?: number;
   code?: string;
   url?: string;
+  attemptedModel?: string;
+  attemptedDeployment?: string;
 };
 
 type TtsError = Error & {
@@ -39,6 +41,8 @@ type AzureSpeechRequest = {
   url: string;
   body: Record<string, unknown>;
   label: string;
+  model: string;
+  deployment: string;
 };
 
 const parseAzureEndpoint = (settings: Pick<AISettings, 'azureOpenAiEndpoint' | 'azureOpenAiApiVersion' | 'azureOpenAiTtsModel'>) => {
@@ -102,10 +106,20 @@ export const isTtsQuotaError = (error: unknown) => {
 export const formatTtsErrorForUser = (error: unknown, fallbackAction = 'Text-to-speech') => {
   const details = getTtsErrorDetails(error);
   const message = error instanceof Error ? error.message : String(error || 'Unknown error.');
+  const attempted = [
+    details?.attemptedModel ? `Attempted model: ${details.attemptedModel}` : '',
+    details?.attemptedDeployment ? `Attempted deployment: ${details.attemptedDeployment}` : '',
+  ].filter(Boolean).join('\n');
+  const azureMismatch = message.includes('gpt-4o-mini-transcribe')
+    && !details?.attemptedModel?.includes('transcribe')
+    && !details?.attemptedDeployment?.includes('transcribe')
+      ? '\n\nAzure reported gpt-4o-mini-transcribe even though this app requested TTS. That means the Azure deployment/resource/key is still resolving to a transcribe-backed deployment or IT provided the wrong Azure resource.'
+      : '';
+  const diagnostic = attempted ? `\n\n${attempted}${azureMismatch}` : azureMismatch;
   if (details?.status === 429) {
-    return `Azure OpenAI TTS rate limit or quota was reached. Completed pages were saved and the batch can be resumed later.${details.retryAfterSeconds ? ` Retry after about ${details.retryAfterSeconds} seconds.` : ''}\n\n${message}`;
+    return `Azure OpenAI TTS rate limit or quota was reached. Completed pages were saved and the batch can be resumed later.${details.retryAfterSeconds ? ` Retry after about ${details.retryAfterSeconds} seconds.` : ''}\n\n${message}${diagnostic}`;
   }
-  return `${fallbackAction} failed because of "${message}"`;
+  return `${fallbackAction} failed because of "${message}"${diagnostic}`;
 };
 
 const buildAzureSpeechRequests = (
@@ -125,6 +139,8 @@ const buildAzureSpeechRequests = (
       label: 'Azure OpenAI v1 audio speech',
       url: `${endpoint.v1Base}/audio/speech?api-version=${encodeURIComponent(endpoint.apiVersion)}`,
       body: v1Body,
+      model: endpoint.model,
+      deployment: endpoint.deployment,
     },
   ];
 
@@ -134,13 +150,15 @@ const buildAzureSpeechRequests = (
       label: 'Azure OpenAI deployment audio speech',
       url: deploymentUrl,
       body: deploymentBody,
+      model: endpoint.model,
+      deployment: endpoint.deployment,
     });
   }
 
   return candidates;
 };
 
-const parseTtsResponseError = async (response: Response, url: string) => {
+const parseTtsResponseError = async (response: Response, request: AzureSpeechRequest) => {
   const retryAfterSeconds = Number(response.headers.get('retry-after')) || undefined;
   let message = `Azure OpenAI TTS returned HTTP ${response.status}.`;
   let code: string | undefined;
@@ -152,7 +170,14 @@ const parseTtsResponseError = async (response: Response, url: string) => {
   } catch {
     message = await response.text().catch(() => message) || message;
   }
-  return buildTtsError(message, { status: response.status, retryAfterSeconds, code, url });
+  return buildTtsError(message, {
+    status: response.status,
+    retryAfterSeconds,
+    code,
+    url: request.url,
+    attemptedModel: request.model,
+    attemptedDeployment: request.deployment,
+  });
 };
 
 export async function generateNarrationAudio(
@@ -193,14 +218,14 @@ export async function generateNarrationAudio(
 
       if (response.ok) return response.blob();
 
-      lastError = await parseTtsResponseError(response, request.url);
+      lastError = await parseTtsResponseError(response, request);
       if (![404, 405, 410].includes(response.status)) throw lastError;
     } catch (error) {
       if (getTtsErrorDetails(error)?.status) throw error;
       const message = error instanceof Error ? error.message : String(error || 'Unknown network error.');
       lastError = buildTtsError(
         `${request.label} could not be reached from this browser. If this is the deployed GitHub Pages app, check browser DevTools for a CORS/preflight error and use an Azure Function/API proxy if Azure does not allow direct browser calls. Also verify the endpoint is the Azure OpenAI endpoint, usually https://<resource>.openai.azure.com or a copied URL ending in /openai/v1. Details: ${message}`,
-        { url: request.url },
+        { url: request.url, attemptedModel: request.model, attemptedDeployment: request.deployment },
       );
     }
   }
