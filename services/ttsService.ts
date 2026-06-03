@@ -44,7 +44,8 @@ type AzureSpeechRequest = {
 const parseAzureEndpoint = (settings: Pick<AISettings, 'azureOpenAiEndpoint' | 'azureOpenAiApiVersion' | 'azureOpenAiTtsModel'>) => {
   const endpoint = settings.azureOpenAiEndpoint?.trim().replace(/\/+$/, '');
   if (!endpoint) throw new Error('Missing Azure OpenAI endpoint. Add it in AI Settings.');
-  const model = settings.azureOpenAiTtsModel?.trim() || AZURE_OPENAI_TTS_MODEL;
+  const configuredModelOrDeployment = settings.azureOpenAiTtsModel?.trim();
+  const model = configuredModelOrDeployment || AZURE_OPENAI_TTS_MODEL;
   let url: URL;
   try {
     url = new URL(endpoint);
@@ -59,7 +60,8 @@ const parseAzureEndpoint = (settings: Pick<AISettings, 'azureOpenAiEndpoint' | '
     : apiVersion;
   const path = url.pathname.replace(/\/+$/, '');
   const deploymentMatch = path.match(/\/openai\/deployments\/([^/]+)/i);
-  const deployment = decodeURIComponent(deploymentMatch?.[1] || model);
+  const endpointDeployment = deploymentMatch?.[1] ? decodeURIComponent(deploymentMatch[1]) : '';
+  const deployment = configuredModelOrDeployment || endpointDeployment || AZURE_OPENAI_TTS_MODEL;
   const openAiV1Index = path.toLowerCase().indexOf('/openai/v1');
   const isProjectEndpoint = path.toLowerCase().includes('/api/projects/');
   const resourceRootPath = path.toLowerCase().includes('/openai/')
