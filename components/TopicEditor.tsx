@@ -3,10 +3,11 @@ import { Topic, MediaItem, FileSystemDirectoryHandle, FileSystemHandle, FileSyst
 import { Upload, Image as ImageIcon, Sparkles, Wand2, Mic, Search, BookOpen, ChevronRight, ExternalLink, Activity, X, Info, FileAudio, FileVideo, AlertCircle, Loader2, Link, CheckSquare, Plus, Trash2, CheckCircle2, XCircle, Bot, Maximize2, FileText, Play, Clock } from 'lucide-react';
 import { ScormManager } from '../services/scormManager';
 import { formatGeminiErrorForUser, generateImageFromPrompt, transcribeAudioToVTT, researchTerm, generateDistractors } from '../services/geminiService';
-import { formatTtsErrorForUser, generateNarrationAudio } from '../services/ttsService';
+import { buildTtsDiagnosticReport, generateNarrationAudio } from '../services/ttsService';
 import { BinaryDecoder } from '../services/binaryDecoder';
 import { RichTextEditor } from './RichTextEditor';
 import { MediaSearchModal } from './MediaSearchModal';
+import { ErrorDiagnosticsModal } from './ErrorDiagnosticsModal';
 import { DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES, TTS_PACE_OPTIONS } from '../constants';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from '../utils/captions';
 
@@ -46,6 +47,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   
   // UI State
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [ttsDiagnosticReport, setTtsDiagnosticReport] = useState<string | null>(null);
   const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
   const [availableFiles, setAvailableFiles] = useState<string[]>([]);
   const [isMaximizedCaption, setIsMaximizedCaption] = useState(false);
@@ -689,8 +691,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       clearAiFailures();
     } catch (e: any) {
       console.error("Failed to generate narration audio", e);
+      setTtsDiagnosticReport(buildTtsDiagnosticReport(e, 'Text-to-speech narration'));
       const recoveryOpened = recordAiFailure('Text-to-speech narration', e);
-      if (!recoveryOpened) alert(`Failed to generate narration audio:\n\n${formatTtsErrorForUser(e, 'Text-to-speech narration')}`);
+      if (!recoveryOpened) setIsAiRecoveryOpen(false);
     } finally {
       setGeneratingAudio(false);
     }
@@ -1633,6 +1636,14 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                   </div>
               </div>
           </div>
+      )}
+
+      {ttsDiagnosticReport && (
+          <ErrorDiagnosticsModal
+              title="Azure OpenAI TTS Error Diagnostics"
+              report={ttsDiagnosticReport}
+              onClose={() => setTtsDiagnosticReport(null)}
+          />
       )}
 
       {/* Research Sidebar */}

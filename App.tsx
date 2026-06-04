@@ -6,10 +6,11 @@ import { AIGeneratorModal } from './components/AIGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
 import { PasswordGate } from './components/PasswordGate';
 import { NewCourseModal, NewCourseRequest } from './components/NewCourseModal';
+import { ErrorDiagnosticsModal } from './components/ErrorDiagnosticsModal';
 import { ScormManager } from './services/scormManager';
 import { ScormPackager } from './services/scormPackager';
 import { formatGeminiErrorForUser, generateCourseContent, transcribeAudioToVTT } from './services/geminiService';
-import { formatTtsErrorForUser, generateNarrationAudio, getTtsErrorDetails, isTtsQuotaError } from './services/ttsService';
+import { buildTtsDiagnosticReport, formatTtsErrorForUser, generateNarrationAudio, getTtsErrorDetails, isTtsQuotaError } from './services/ttsService';
 import { importPowerPointCourse } from './services/powerPointImporter';
 import { importLegacyScormFromFolder, importLegacyScormFromZip } from './services/legacyScormImporter';
 import { BinaryDecoder } from './services/binaryDecoder';
@@ -37,6 +38,7 @@ const App: React.FC = () => {
   const [pronunciationConfig, setPronunciationConfig] = useState<PronunciationConfig>({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
   const [batchJob, setBatchJob] = useState<BatchJobType>(null);
   const [batchProgress, setBatchProgress] = useState<BatchProgressItem[]>([]);
+  const [ttsDiagnosticReport, setTtsDiagnosticReport] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSiteUnlocked, setIsSiteUnlocked] = useState(() => sessionStorage.getItem('scorm_studio_unlocked') === 'true');
@@ -812,6 +814,7 @@ const App: React.FC = () => {
           if (isTtsQuotaError(error)) {
             quotaPaused = true;
             const details = getTtsErrorDetails(error);
+            setTtsDiagnosticReport(buildTtsDiagnosticReport(error, `Batch Generate TTS: ${page.title}`));
             updateBatchProgressDetails(page.id, {
               audioStatus: 'pending',
               quotaPaused: true,
@@ -821,6 +824,7 @@ const App: React.FC = () => {
             });
             break;
           }
+          setTtsDiagnosticReport(buildTtsDiagnosticReport(error, `Batch Generate TTS: ${page.title}`));
           updateBatchProgressItem(page.id, { audioStatus: 'error', message: error.message || String(error) });
           continue;
         }
@@ -833,7 +837,7 @@ const App: React.FC = () => {
       }
     } catch (error: any) {
       console.error(error);
-      alert(`Batch TTS failed:\n\n${formatTtsErrorForUser(error, 'Batch Generate TTS')}`);
+      setTtsDiagnosticReport(buildTtsDiagnosticReport(error, 'Batch Generate TTS'));
     } finally {
       setBatchJob(null);
     }
@@ -1401,6 +1405,13 @@ const App: React.FC = () => {
         onClose={() => setIsNewCourseOpen(false)}
         onCreate={handleCreateNewCourse}
       />
+      {ttsDiagnosticReport && (
+        <ErrorDiagnosticsModal
+          title="Azure OpenAI TTS Error Diagnostics"
+          report={ttsDiagnosticReport}
+          onClose={() => setTtsDiagnosticReport(null)}
+        />
+      )}
     </div>
   );
 };

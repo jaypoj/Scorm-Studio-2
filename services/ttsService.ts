@@ -122,6 +122,40 @@ export const formatTtsErrorForUser = (error: unknown, fallbackAction = 'Text-to-
   return `${fallbackAction} failed because of "${message}"${diagnostic}`;
 };
 
+export const buildTtsDiagnosticReport = (error: unknown, action = 'Text-to-speech') => {
+  const details = getTtsErrorDetails(error);
+  const rawMessage = error instanceof Error ? error.message : String(error || 'Unknown error.');
+  const lines = [
+    'SCORM Architect Azure OpenAI TTS Diagnostic Report',
+    `Generated: ${new Date().toISOString()}`,
+    `Action: ${action}`,
+    '',
+    'User-facing message:',
+    formatTtsErrorForUser(error, action),
+    '',
+    'Raw provider/app error:',
+    rawMessage,
+    '',
+    'Request diagnostics:',
+    `Attempted model: ${details?.attemptedModel || '(not captured)'}`,
+    `Attempted deployment: ${details?.attemptedDeployment || '(not captured)'}`,
+    `HTTP status: ${details?.status ?? '(not captured)'}`,
+    `Provider code: ${details?.code || '(not captured)'}`,
+    `Retry after seconds: ${details?.retryAfterSeconds ?? '(none)'}`,
+    `Request URL: ${details?.url || '(not captured)'}`,
+    '',
+    'Important interpretation:',
+    rawMessage.includes('gpt-4o-mini-transcribe') && !details?.attemptedModel?.includes('transcribe') && !details?.attemptedDeployment?.includes('transcribe')
+      ? 'Azure reported gpt-4o-mini-transcribe even though this app attempted gpt-4o-mini-tts. This indicates the Azure deployment/resource/key is still resolving to a transcribe-backed deployment or the wrong Azure resource was provided.'
+      : 'If the raw provider error names a different model than the attempted model/deployment above, the mismatch is coming from Azure or the provided Azure resource/deployment, not from the SCORM Architect client code.',
+    '',
+    'Security note:',
+    'This report intentionally does not include the Azure API key.',
+  ];
+  if (typeof navigator !== 'undefined') lines.push('', `Browser: ${navigator.userAgent}`);
+  return lines.join('\n');
+};
+
 const buildAzureSpeechRequests = (
   settings: Pick<AISettings, 'azureOpenAiEndpoint' | 'azureOpenAiApiVersion' | 'azureOpenAiTtsModel'>,
   baseBody: Record<string, unknown>,
