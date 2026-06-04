@@ -8,11 +8,28 @@ const TTS_INPUT_LIMIT = 4096;
 
 type TtsErrorDetails = {
   status?: number;
+  statusText?: string;
   retryAfterSeconds?: number;
   code?: string;
+  providerMessage?: string;
   url?: string;
   attemptedModel?: string;
   attemptedDeployment?: string;
+  rawProviderResponseBody?: string;
+  parsedProviderError?: unknown;
+  requestIds?: Record<string, string>;
+  requestDiagnostics?: {
+    timestamp: string;
+    action: 'text-to-speech narration';
+    method: 'POST';
+    url: string;
+    attemptedModel: string;
+    attemptedDeployment: string;
+    voice: string;
+    responseFormat: string;
+    inputTextLength: number;
+    sanitizedHeaders: Record<string, string>;
+  };
 };
 
 type TtsError = Error & {
@@ -41,8 +58,12 @@ type AzureSpeechRequest = {
   url: string;
   body: Record<string, unknown>;
   label: string;
+  timestamp: string;
   model: string;
   deployment: string;
+  voice: string;
+  responseFormat: string;
+  inputTextLength: number;
 };
 
 const parseAzureEndpoint = (settings: Pick<AISettings, 'azureOpenAiEndpoint' | 'azureOpenAiApiVersion' | 'azureOpenAiTtsModel'>) => {
@@ -95,6 +116,46 @@ const buildTtsError = (message: string, details: TtsErrorDetails = {}) => {
   return error;
 };
 
+const extractProviderError = (parsedProviderError: unknown) => {
+  const payload = parsedProviderError as any;
+  const errorPayload = payload?.error || payload;
+  return {
+    code: errorPayload?.code || payload?.code,
+    message: errorPayload?.message || errorPayload?.error || payload?.message,
+  };
+};
+
+const getAzureRequestIds = (headers: Headers) => {
+  const ids: Record<string, string> = {};
+  [
+    'x-request-id',
+    'x-ms-request-id',
+    'apim-request-id',
+    'request-id',
+    'operation-id',
+  ].forEach(header => {
+    const value = headers.get(header);
+    if (value) ids[header] = value;
+  });
+  return ids;
+};
+
+const buildRequestDiagnostics = (request: AzureSpeechRequest): NonNullable<TtsErrorDetails['requestDiagnostics']> => ({
+  timestamp: request.timestamp,
+  action: 'text-to-speech narration',
+  method: 'POST',
+  url: request.url,
+  attemptedModel: request.model,
+  attemptedDeployment: request.deployment,
+  voice: request.voice,
+  responseFormat: request.responseFormat,
+  inputTextLength: request.inputTextLength,
+  sanitizedHeaders: {
+    'Content-Type': 'application/json',
+    'api-key': '[redacted]',
+  },
+});
+
 export const getTtsErrorDetails = (error: unknown) => (error as TtsError)?.ttsDetails;
 
 export const isTtsQuotaError = (error: unknown) => {
@@ -125,6 +186,10 @@ export const formatTtsErrorForUser = (error: unknown, fallbackAction = 'Text-to-
 export const buildTtsDiagnosticReport = (error: unknown, action = 'Text-to-speech') => {
   const details = getTtsErrorDetails(error);
   const rawMessage = error instanceof Error ? error.message : String(error || 'Unknown error.');
+  const requestDiagnostics = details?.requestDiagnostics;
+  const parsedProviderError = details?.parsedProviderError
+    ? JSON.stringify(details.parsedProviderError, null, 2)
+    : '(not parsed or not JSON)';
   const lines = [
     'SCORM Architect Azure OpenAI TTS Diagnostic Report',
     `Generated: ${new Date().toISOString()}`,
@@ -136,13 +201,31 @@ export const buildTtsDiagnosticReport = (error: unknown, action = 'Text-to-speec
     'Raw provider/app error:',
     rawMessage,
     '',
+    'Raw Azure provider response body:',
+    details?.rawProviderResponseBody || '(not captured)',
+    '',
+    'Parsed provider error JSON:',
+    parsedProviderError,
+    '',
     'Request diagnostics:',
-    `Attempted model: ${details?.attemptedModel || '(not captured)'}`,
-    `Attempted deployment: ${details?.attemptedDeployment || '(not captured)'}`,
+    `Timestamp: ${requestDiagnostics?.timestamp || '(not captured)'}`,
+    `Action: ${requestDiagnostics?.action || action}`,
+    `HTTP method: ${requestDiagnostics?.method || 'POST'}`,
+    `Request URL: ${requestDiagnostics?.url || details?.url || '(not captured)'}`,
+    `Attempted model: ${requestDiagnostics?.attemptedModel || details?.attemptedModel || '(not captured)'}`,
+    `Attempted deployment: ${requestDiagnostics?.attemptedDeployment || details?.attemptedDeployment || '(not captured)'}`,
+    `Voice: ${requestDiagnostics?.voice || '(not captured)'}`,
+    `Response format: ${requestDiagnostics?.responseFormat || '(not captured)'}`,
+    `Input text length: ${requestDiagnostics?.inputTextLength ?? '(not captured)'}`,
+    `Sanitized headers: ${JSON.stringify(requestDiagnostics?.sanitizedHeaders || { 'api-key': '[redacted]' }, null, 2)}`,
+    '',
+    'Response diagnostics:',
     `HTTP status: ${details?.status ?? '(not captured)'}`,
+    `HTTP status text: ${details?.statusText || '(not captured)'}`,
+    `Azure/OpenAI request IDs: ${JSON.stringify(details?.requestIds || {}, null, 2)}`,
     `Provider code: ${details?.code || '(not captured)'}`,
+    `Provider message: ${details?.providerMessage || '(not captured)'}`,
     `Retry after seconds: ${details?.retryAfterSeconds ?? '(none)'}`,
-    `Request URL: ${details?.url || '(not captured)'}`,
     '',
     'Important interpretation:',
     rawMessage.includes('gpt-4o-mini-transcribe') && !details?.attemptedModel?.includes('transcribe') && !details?.attemptedDeployment?.includes('transcribe')
@@ -161,6 +244,10 @@ const buildAzureSpeechRequests = (
   baseBody: Record<string, unknown>,
 ): AzureSpeechRequest[] => {
   const endpoint = parseAzureEndpoint(settings);
+  const voice = String(baseBody.voice || DEFAULT_TTS_SETTINGS.voiceName);
+  const responseFormat = String(baseBody.response_format || 'wav');
+  const inputTextLength = String(baseBody.input || '').length;
+  const timestamp = new Date().toISOString();
   const v1Body = {
     ...baseBody,
     model: endpoint.model,
@@ -173,8 +260,12 @@ const buildAzureSpeechRequests = (
       label: 'Azure OpenAI v1 audio speech',
       url: `${endpoint.v1Base}/audio/speech?api-version=${encodeURIComponent(endpoint.apiVersion)}`,
       body: v1Body,
+      timestamp,
       model: endpoint.model,
       deployment: endpoint.deployment,
+      voice,
+      responseFormat,
+      inputTextLength,
     },
   ];
 
@@ -184,8 +275,12 @@ const buildAzureSpeechRequests = (
       label: 'Azure OpenAI deployment audio speech',
       url: deploymentUrl,
       body: deploymentBody,
+      timestamp,
       model: endpoint.model,
       deployment: endpoint.deployment,
+      voice,
+      responseFormat,
+      inputTextLength,
     });
   }
 
@@ -194,23 +289,28 @@ const buildAzureSpeechRequests = (
 
 const parseTtsResponseError = async (response: Response, request: AzureSpeechRequest) => {
   const retryAfterSeconds = Number(response.headers.get('retry-after')) || undefined;
-  let message = `Azure OpenAI TTS returned HTTP ${response.status}.`;
-  let code: string | undefined;
+  const rawProviderResponseBody = await response.text();
+  let parsedProviderError: unknown;
   try {
-    const body = await response.json();
-    const errorPayload = body.error || body;
-    message = errorPayload.message || errorPayload.error || body.message || message;
-    code = errorPayload.code || body.code;
+    parsedProviderError = rawProviderResponseBody ? JSON.parse(rawProviderResponseBody) : undefined;
   } catch {
-    message = await response.text().catch(() => message) || message;
+    parsedProviderError = undefined;
   }
+  const provider = extractProviderError(parsedProviderError);
+  const message = provider.message || rawProviderResponseBody || `Azure OpenAI TTS returned HTTP ${response.status}.`;
   return buildTtsError(message, {
     status: response.status,
+    statusText: response.statusText,
     retryAfterSeconds,
-    code,
+    code: provider.code,
+    providerMessage: provider.message,
     url: request.url,
     attemptedModel: request.model,
     attemptedDeployment: request.deployment,
+    rawProviderResponseBody,
+    parsedProviderError,
+    requestIds: getAzureRequestIds(response.headers),
+    requestDiagnostics: buildRequestDiagnostics(request),
   });
 };
 
@@ -259,7 +359,12 @@ export async function generateNarrationAudio(
       const message = error instanceof Error ? error.message : String(error || 'Unknown network error.');
       lastError = buildTtsError(
         `${request.label} could not be reached from this browser. If this is the deployed GitHub Pages app, check browser DevTools for a CORS/preflight error and use an Azure Function/API proxy if Azure does not allow direct browser calls. Also verify the endpoint is the Azure OpenAI endpoint, usually https://<resource>.openai.azure.com or a copied URL ending in /openai/v1. Details: ${message}`,
-        { url: request.url, attemptedModel: request.model, attemptedDeployment: request.deployment },
+        {
+          url: request.url,
+          attemptedModel: request.model,
+          attemptedDeployment: request.deployment,
+          requestDiagnostics: buildRequestDiagnostics(request),
+        },
       );
     }
   }
