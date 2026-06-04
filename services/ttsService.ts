@@ -25,6 +25,7 @@ type TtsErrorDetails = {
     url: string;
     attemptedModel: string;
     attemptedDeployment: string;
+    attemptedModelField: string;
     voice: string;
     responseFormat: string;
     inputTextLength: number;
@@ -147,6 +148,7 @@ const buildRequestDiagnostics = (request: AzureSpeechRequest): NonNullable<TtsEr
   url: request.url,
   attemptedModel: request.model,
   attemptedDeployment: request.deployment,
+  attemptedModelField: String(request.body.model || request.model),
   voice: request.voice,
   responseFormat: request.responseFormat,
   inputTextLength: request.inputTextLength,
@@ -214,6 +216,7 @@ export const buildTtsDiagnosticReport = (error: unknown, action = 'Text-to-speec
     `Request URL: ${requestDiagnostics?.url || details?.url || '(not captured)'}`,
     `Attempted model: ${requestDiagnostics?.attemptedModel || details?.attemptedModel || '(not captured)'}`,
     `Attempted deployment: ${requestDiagnostics?.attemptedDeployment || details?.attemptedDeployment || '(not captured)'}`,
+    `Attempted model field: ${requestDiagnostics?.attemptedModelField || '(not captured)'}`,
     `Voice: ${requestDiagnostics?.voice || '(not captured)'}`,
     `Response format: ${requestDiagnostics?.responseFormat || '(not captured)'}`,
     `Input text length: ${requestDiagnostics?.inputTextLength ?? '(not captured)'}`,
@@ -289,6 +292,12 @@ const buildAzureSpeechRequests = (
 
 const parseTtsResponseError = async (response: Response, request: AzureSpeechRequest) => {
   const retryAfterSeconds = Number(response.headers.get('retry-after')) || undefined;
+  const responseHeaders = {
+    'apim-request-id': response.headers.get('apim-request-id'),
+    'x-ms-request-id': response.headers.get('x-ms-request-id'),
+    'x-request-id': response.headers.get('x-request-id'),
+    'retry-after': response.headers.get('retry-after'),
+  };
   const rawProviderResponseBody = await response.text();
   let parsedProviderError: unknown;
   try {
@@ -298,6 +307,17 @@ const parseTtsResponseError = async (response: Response, request: AzureSpeechReq
   }
   const provider = extractProviderError(parsedProviderError);
   const message = provider.message || rawProviderResponseBody || `Azure OpenAI TTS returned HTTP ${response.status}.`;
+  const requestDiagnostics = buildRequestDiagnostics(request);
+  const rawDiagnostic = {
+    ...requestDiagnostics,
+    inputLength: request.inputTextLength,
+    httpStatus: response.status,
+    httpStatusText: response.statusText,
+    responseHeaders,
+    rawProviderResponseBody,
+    parsedProviderError: parsedProviderError ?? null,
+  };
+  console.error('AZURE_OPENAI_TTS_RAW_ERROR', JSON.stringify(rawDiagnostic, null, 2));
   return buildTtsError(message, {
     status: response.status,
     statusText: response.statusText,
@@ -310,7 +330,7 @@ const parseTtsResponseError = async (response: Response, request: AzureSpeechReq
     rawProviderResponseBody,
     parsedProviderError,
     requestIds: getAzureRequestIds(response.headers),
-    requestDiagnostics: buildRequestDiagnostics(request),
+    requestDiagnostics,
   });
 };
 
