@@ -39,6 +39,7 @@ export interface Topic {
   caption?: string; // WebVTT
   videoSearchTerms?: string[];
   media?: MediaItem[];
+  detachedMediaStorageIds?: string[]; // Assets intentionally detached from this page but preserved on disk
   knowledgeCheck?: {
     questions: Question[];
   };
@@ -54,6 +55,7 @@ export interface LearningObjectivesPage {
   imagePrompts: string[];
   caption?: string;
   media?: MediaItem[];
+  detachedMediaStorageIds?: string[];
 }
 
 export interface WelcomePage {
@@ -66,6 +68,7 @@ export interface WelcomePage {
   imagePrompts: string[];
   caption?: string;
   media?: MediaItem[];
+  detachedMediaStorageIds?: string[];
 }
 
 export interface CourseContent {

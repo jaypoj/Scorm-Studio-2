@@ -136,6 +136,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     openExternal(`https://chatgpt.com/?q=${encodeURIComponent(fullPrompt)}`);
   };
 
+  const getDetachedStorageIds = (page: Topic | WelcomePage | LearningObjectivesPage = data) =>
+    new Set((page.detachedMediaStorageIds || []).map(id => id.toLowerCase()));
+
   // Effect to load media previews with Binary Decoding and Metadata
   useEffect(() => {
     let isMounted = true;
@@ -144,6 +147,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       const logs: string[] = [];
       const filesFound: string[] = [];
       const potentiallyDiscovered: MediaItem[] = [];
+      const detachedStorageIds = getDetachedStorageIds();
       
       logs.push("Starting Media Scan & Smart Discovery...");
 
@@ -175,6 +179,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                          
                          if (meta.page_id && meta.page_id === data.id && (!meta.project_id || meta.project_id === projectId)) {
                              const storageId = meta.storageId || meta.id || name.replace('.json', '');
+                             if (detachedStorageIds.has(String(storageId).toLowerCase())) continue;
                              const alreadyLinked = data.media?.some(m => m.storageId === storageId);
                              
                              if (!alreadyLinked) {
@@ -304,7 +309,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
           if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
       });
     };
-  }, [data.media, assetsHandle, data.id]);
+  }, [data.media, data.detachedMediaStorageIds, assetsHandle, data.id]);
 
   // Combine Props Data + Smart Discovery Data
   const allMedia = [...(data.media || []), ...discoveredMedia];
@@ -914,8 +919,12 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
       const matchesMedia = (media: MediaItem) => media.id === mediaId || media.storageId === storageId;
       const newMedia = (data.media || []).filter(media => !matchesMedia(media));
+      const detachedMediaStorageIds = Array.from(new Set([
+          ...(data.detachedMediaStorageIds || []),
+          storageId,
+      ].filter(Boolean)));
       setDiscoveredMedia(prev => prev.filter(media => !matchesMedia(media)));
-      onChange({ ...data, media: newMedia });
+      onChange({ ...data, media: newMedia, detachedMediaStorageIds });
   };
 
   const handleGenerateDistractors = async (index: number, q: Question) => {
