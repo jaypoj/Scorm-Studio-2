@@ -911,8 +911,10 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   const handleDeleteMedia = async (mediaId: string, storageId: string) => {
       const isConfirmed = window.confirm("Remove this media from the current page?\n\nThe file will remain in the media folder so existing projects cannot lose saved assets.");
       if (!isConfirmed) return;
-      
-      const newMedia = (data.media || []).filter(m => m.id !== mediaId);
+
+      const matchesMedia = (media: MediaItem) => media.id === mediaId || media.storageId === storageId;
+      const newMedia = (data.media || []).filter(media => !matchesMedia(media));
+      setDiscoveredMedia(prev => prev.filter(media => !matchesMedia(media)));
       onChange({ ...data, media: newMedia });
   };
 
