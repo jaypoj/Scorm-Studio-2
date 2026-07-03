@@ -23,8 +23,9 @@ Each PDF exports as a separate SCORM 1.2 zip with:
 - `pdfs/<original-name>.pdf`
 - `vendor/pdf.min.js`
 - `vendor/pdf.worker.min.js`
+- `vendor/PDFJS-LICENSE.txt`
 
-The exported runtime has no CDN dependency. PDF.js and its worker are copied into the SCORM zip. The ESM assets use `.js` filenames because Moodle commonly serves `.mjs` with an incompatible MIME type.
+The exported runtime has no CDN dependency. PDF.js and its worker are copied into the SCORM zip as classic JavaScript bundles. The Moodle package does not use ES-module imports because some Moodle file-serving configurations block module execution or return incompatible MIME types.
 
 ## Completion Rule
 
