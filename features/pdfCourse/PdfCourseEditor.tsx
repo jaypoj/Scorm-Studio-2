@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { ArrowLeft, Download, Eye, FileArchive, FilePlus2, Save, ShieldCheck, Trash2 } from 'lucide-react';
-import { buildPdfScormCollection, buildPdfScormPackage } from './pdfCourseExport';
+import { ArrowLeft, CheckCircle2, Download, Eye, FileArchive, FilePlus2, Save, ShieldCheck, Trash2, X } from 'lucide-react';
+import { buildPdfScormPackage, PdfScormPackage } from './pdfCourseExport';
 import { buildPdfCourseProjectZip, createPdfCourseProject, downloadBlob } from './pdfProjectZip';
 import { PdfCoursePreview } from './PdfCoursePreview';
 import { PdfCourseDocument, PdfCourseProject } from './types';
@@ -19,6 +19,7 @@ const updateTimestamp = (project: PdfCourseProject): PdfCourseProject => ({
 export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onChange, onClose }) => {
   const addInputRef = useRef<HTMLInputElement>(null);
   const [previewDocument, setPreviewDocument] = useState<PdfCourseDocument | null>(null);
+  const [preparedPackages, setPreparedPackages] = useState<PdfScormPackage[]>([]);
   const [busyMessage, setBusyMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -77,10 +78,15 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
 
   const exportAll = async () => {
     setError('');
+    setPreparedPackages([]);
     setBusyMessage('Building individual SCORM packages...');
     try {
-      const result = await buildPdfScormCollection(project);
-      downloadBlob(result.blob, result.fileName);
+      const packages: PdfScormPackage[] = [];
+      for (const document of project.documents) {
+        setBusyMessage(`Building Moodle package: ${document.title}...`);
+        packages.push(await buildPdfScormPackage(project, document));
+      }
+      setPreparedPackages(packages);
       onChange(updateTimestamp({
         ...project,
         documents: project.documents.map(document => ({ ...document, exportStatus: 'exported' })),
@@ -118,7 +124,7 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
               <Save className="h-4 w-4" /> Save PDF Course
             </button>
             <button onClick={exportAll} disabled={!project.documents.length || Boolean(busyMessage)} className="flex items-center gap-2 bg-[#a9472b] px-4 py-2 font-bold text-white hover:bg-[#8d3823] disabled:opacity-50">
-              <Download className="h-4 w-4" /> Export each PDF
+              <Download className="h-4 w-4" /> Prepare Moodle ZIPs
             </button>
           </div>
           <input
@@ -235,6 +241,46 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
       </main>
 
       {previewDocument && <PdfCoursePreview document={previewDocument} onClose={() => setPreviewDocument(null)} />}
+      {preparedPackages.length > 0 && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-[#141b17]/85 p-4">
+          <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#93866e] bg-[#fffdf7] shadow-2xl">
+            <header className="flex items-start justify-between gap-4 border-b-2 border-[#18221d] p-5">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a9472b]">Moodle-ready exports</p>
+                <h2 className="font-serif text-2xl font-bold">Download each SCORM ZIP separately</h2>
+                <p className="mt-2 max-w-2xl font-sans text-sm leading-relaxed text-slate-600">
+                  Upload each downloaded ZIP directly as its own Moodle SCORM activity. Do not place these ZIPs inside another ZIP before uploading.
+                </p>
+              </div>
+              <button onClick={() => setPreparedPackages([])} className="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Close export downloads">
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-auto p-5">
+              <div className="mb-4 flex items-center gap-2 border border-[#8eb097] bg-[#e6efe6] p-3 font-sans text-sm text-[#34513c]">
+                <CheckCircle2 className="h-5 w-5 shrink-0" />
+                Every ZIP below contains <code>imsmanifest.xml</code> at its root.
+              </div>
+              <div className="divide-y divide-[#c9bea8] border-y border-[#c9bea8]">
+                {preparedPackages.map((packageFile, index) => (
+                  <div key={packageFile.fileName} className="flex flex-col justify-between gap-3 py-4 sm:flex-row sm:items-center">
+                    <div className="min-w-0">
+                      <p className="font-serif font-bold">{index + 1}. {packageFile.fileName}</p>
+                      <p className="mt-1 font-sans text-xs text-slate-500">Independent SCORM 1.2 activity</p>
+                    </div>
+                    <button
+                      onClick={() => downloadBlob(packageFile.blob, packageFile.fileName)}
+                      className="flex shrink-0 items-center justify-center gap-2 bg-[#41644a] px-4 py-2 font-sans text-sm font-bold text-white hover:bg-[#34513c]"
+                    >
+                      <Download className="h-4 w-4" /> Download Moodle ZIP
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

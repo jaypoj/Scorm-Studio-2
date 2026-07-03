@@ -50,7 +50,7 @@ Opening the activity does not mark it complete.
    - Acknowledgement enables after reaching the end.
    - Mock SCORM log records completion only after acknowledgement.
 7. Export one PDF and inspect the zip for the required local files.
-8. Export all PDFs and confirm the collection zip contains one independent SCORM zip per PDF.
+8. Prepare all Moodle ZIPs and download each independent SCORM package separately from the export window.
 9. Upload an individual package to Moodle and verify:
    - It launches without external network dependencies.
    - Resume data is saved.

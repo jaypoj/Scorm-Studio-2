@@ -294,20 +294,14 @@ export const buildPdfScormPackage = async (
     generatedAt: new Date().toISOString(),
   }, null, 2));
 
-  return {
-    blob: await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }),
-    fileName: `${safeZipName(document.sopNumber ? `${document.sopNumber}_${document.title}` : document.title)}_SCORM1.2.zip`,
-  };
-};
-
-export const buildPdfScormCollection = async (project: PdfCourseProject): Promise<PdfScormPackage> => {
-  const collection = new JSZip();
-  for (const document of project.documents) {
-    const scormPackage = await buildPdfScormPackage(project, document);
-    collection.file(scormPackage.fileName, scormPackage.blob);
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const verificationZip = await JSZip.loadAsync(blob);
+  if (!verificationZip.file('imsmanifest.xml')) {
+    throw new Error(`SCORM package validation failed for ${document.title}: imsmanifest.xml is not at the ZIP root.`);
   }
+
   return {
-    blob: await collection.generateAsync({ type: 'blob', compression: 'STORE' }),
-    fileName: `${safeZipName(project.name)}_Individual_SCORM_Packages.zip`,
+    blob,
+    fileName: `${safeZipName(document.sopNumber ? `${document.sopNumber}_${document.title}` : document.title)}_SCORM1.2.zip`,
   };
 };
