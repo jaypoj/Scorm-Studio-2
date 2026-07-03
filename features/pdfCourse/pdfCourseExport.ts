@@ -58,7 +58,6 @@ const buildManifest = (document: PdfCourseDocument, pdfFileName: string) => `<?x
       <file href="styles.css"/>
       <file href="runtime.js"/>
       <file href="pdf-course-metadata.json"/>
-      <file href="vendor/pdf.worker.min.js"/>
       <file href="vendor/PDFJS-LICENSE.txt"/>
       <file href="pdfs/${escapeXml(pdfFileName)}"/>
     </resource>
@@ -150,7 +149,6 @@ const styles = `:root{color-scheme:light;--ink:#18221d;--paper:#f4f0e7;--cream:#
 const runtime = `;(function(){
 const pdfApi = globalThis.pdfjsLib;
 if(!pdfApi)throw new Error('The local PDF.js library did not initialize.');
-pdfApi.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.js';
 
 const config = window.PDF_COURSE_CONFIG;
 const scrollBox = document.getElementById('pdf-scroll');
@@ -309,14 +307,13 @@ export const buildPdfScormPackage = async (
   const zip = new JSZip();
   const pdfFileName = sanitizePdfFileName(document.fileName);
   const [pdfLibrary, pdfWorker] = await getPdfJsAssets();
-  const combinedRuntime = `${await pdfLibrary.text()}\n${runtime}`;
+  const combinedRuntime = `${await pdfWorker.text()}\n${await pdfLibrary.text()}\n${runtime}`;
 
   zip.file('imsmanifest.xml', buildManifest(document, pdfFileName));
   zip.file('index.html', buildIndex(document, pdfFileName));
   zip.file('styles.css', styles);
   zip.file('runtime.js', combinedRuntime);
   zip.file(`pdfs/${pdfFileName}`, document.file);
-  zip.file('vendor/pdf.worker.min.js', pdfWorker);
   zip.file('vendor/PDFJS-LICENSE.txt', pdfJsLicense);
   zip.file('pdf-course-metadata.json', JSON.stringify({
     projectId: project.id,
@@ -336,7 +333,6 @@ export const buildPdfScormPackage = async (
     'imsmanifest.xml',
     'index.html',
     'runtime.js',
-    'vendor/pdf.worker.min.js',
     'vendor/PDFJS-LICENSE.txt',
     `pdfs/${pdfFileName}`,
   ];
