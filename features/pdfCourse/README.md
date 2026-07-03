@@ -18,14 +18,13 @@ Each PDF exports as a separate SCORM 1.2 zip with:
 - `imsmanifest.xml`
 - `index.html`
 - `styles.css`
-- `runtime.js`
+- `runtime.js` (course runtime plus the classic PDF.js browser library)
 - `pdf-course-metadata.json`
 - `pdfs/<original-name>.pdf`
-- `vendor/pdf.min.js`
 - `vendor/pdf.worker.min.js`
 - `vendor/PDFJS-LICENSE.txt`
 
-The exported runtime has no CDN dependency. PDF.js and its worker are copied into the SCORM zip as classic JavaScript bundles. The Moodle package does not use ES-module imports because some Moodle file-serving configurations block module execution or return incompatible MIME types.
+The exported runtime has no CDN dependency. The official PDF.js legacy browser build is bundled directly into `runtime.js`, and its worker is copied into the SCORM zip as classic JavaScript. The Moodle package does not use ES-module imports because some Moodle file-serving configurations block module execution or return incompatible MIME types.
 
 ## Completion Rule
 

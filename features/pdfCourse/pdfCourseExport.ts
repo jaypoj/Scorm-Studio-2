@@ -58,7 +58,6 @@ const buildManifest = (document: PdfCourseDocument, pdfFileName: string) => `<?x
       <file href="styles.css"/>
       <file href="runtime.js"/>
       <file href="pdf-course-metadata.json"/>
-      <file href="vendor/pdf.min.js"/>
       <file href="vendor/pdf.worker.min.js"/>
       <file href="vendor/PDFJS-LICENSE.txt"/>
       <file href="pdfs/${escapeXml(pdfFileName)}"/>
@@ -111,17 +110,27 @@ const buildIndex = (document: PdfCourseDocument, pdfFileName: string) => `<!doct
         status.classList.add('error');
         status.textContent='PDF viewer failed to start: '+message;
       }
+      function recordStartupError(message){
+        if(window.PDF_COURSE_STARTUP_ERROR)return;
+        window.PDF_COURSE_STARTUP_ERROR=message;
+        showRuntimeError(message);
+      }
       window.addEventListener('error',function(event){
-        showRuntimeError(event.message||'Unknown script loading error.');
+        var target=event.target;
+        if(target&&target.tagName==='SCRIPT'){
+          recordStartupError('Script failed to load: '+(target.getAttribute('src')||'unknown script'));
+          return;
+        }
+        recordStartupError(event.message||'Unknown script error.');
       });
       window.addEventListener('unhandledrejection',function(event){
         var reason=event.reason;
-        showRuntimeError(reason&&reason.message?reason.message:String(reason||'Unknown module error.'));
+        recordStartupError(reason&&reason.message?reason.message:String(reason||'Unknown script error.'));
       });
       window.setTimeout(function(){
         var status=document.getElementById('status');
         if(status&&status.textContent==='Loading PDF...'){
-          showRuntimeError('The PDF.js runtime did not load. Check that vendor/pdf.min.js and vendor/pdf.worker.min.js are available.');
+          recordStartupError('The PDF.js runtime did not finish loading.');
         }
       },12000);
     })();
@@ -132,14 +141,13 @@ const buildIndex = (document: PdfCourseDocument, pdfFileName: string) => `<!doct
       estimatedTimeMinutes: document.estimatedTimeMinutes || null,
     }).replace(/</g, '\\u003c')};
   </script>
-  <script src="vendor/pdf.min.js"></script>
   <script src="runtime.js"></script>
 </body>
 </html>`;
 
 const styles = `:root{color-scheme:light;--ink:#18221d;--paper:#f4f0e7;--cream:#fffdf7;--rule:#c9bea8;--accent:#a9472b;--green:#41644a}*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Georgia,"Times New Roman",serif;background:var(--paper);color:var(--ink)}body{padding:0 0 40px}.sop-header{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;gap:24px;align-items:center;padding:18px 28px;background:rgba(255,253,247,.97);border-bottom:2px solid var(--ink);box-shadow:0 8px 24px rgba(24,34,29,.08)}.eyebrow{margin:0 0 4px;text-transform:uppercase;letter-spacing:.14em;font:700 11px/1.3 Arial,sans-serif;color:var(--accent)}h1{margin:0;font-size:clamp(22px,3vw,34px);line-height:1.1}.instructions{margin:8px 0 0;max-width:760px;color:#526058;font:14px/1.45 Arial,sans-serif}.progress-card{min-width:128px;padding:10px 14px;border:1px solid var(--rule);background:var(--paper);text-align:right}.progress-card strong{display:block;font:800 24px/1 Arial,sans-serif}.progress-card span{font:11px/1.3 Arial,sans-serif;color:#59645d}main{width:min(1180px,calc(100% - 28px));margin:20px auto}.status{padding:12px 16px;border:1px solid var(--rule);background:var(--cream);font:13px Arial,sans-serif}.pdf-scroll{height:calc(100vh - 270px);min-height:420px;overflow:auto;margin-top:12px;padding:24px;background:#343a36;border:3px solid var(--ink);scrollbar-color:var(--accent) #222}.pdf-pages{display:flex;flex-direction:column;align-items:center;gap:22px}.pdf-page{position:relative;background:white;box-shadow:0 12px 30px rgba(0,0,0,.32)}.page-number{position:absolute;right:8px;bottom:6px;padding:3px 7px;background:rgba(24,34,29,.85);color:white;font:11px Arial,sans-serif}.pdf-page canvas{display:block;max-width:100%;height:auto}.ack-panel{display:flex;justify-content:space-between;gap:24px;align-items:center;margin-top:18px;padding:20px 22px;background:var(--cream);border:2px solid var(--ink)}.ack-panel h2{margin:0 0 6px}.ack-panel p{margin:0;line-height:1.5}.unlock-help{margin-top:8px!important;color:#6a746d;font:12px Arial,sans-serif}.ack-panel button{min-width:220px;padding:14px 18px;border:0;background:var(--green);color:white;font:800 14px Arial,sans-serif;cursor:pointer}.ack-panel button:disabled{background:#a8aea9;cursor:not-allowed}.completion-message{margin-top:14px;padding:16px 20px;background:#e2efe4;border:2px solid var(--green);font-weight:700}.error{color:#8d2518;border-color:#b64b39;background:#fff0ed}@media(max-width:760px){.sop-header,.ack-panel{align-items:flex-start;flex-direction:column}.progress-card{width:100%;text-align:left}.pdf-scroll{height:62vh;padding:10px}.ack-panel button{width:100%}}`;
 
-const runtime = `const pdfjsLib = window.pdfjsLib;
+const runtime = `const pdfjsLib = globalThis.pdfjsLib;
 if(!pdfjsLib)throw new Error('The local PDF.js library did not initialize.');
 pdfjsLib.GlobalWorkerOptions.workerSrc = './vendor/pdf.worker.min.js';
 
@@ -299,13 +307,13 @@ export const buildPdfScormPackage = async (
   const zip = new JSZip();
   const pdfFileName = sanitizePdfFileName(document.fileName);
   const [pdfLibrary, pdfWorker] = await getPdfJsAssets();
+  const combinedRuntime = `${await pdfLibrary.text()}\n${runtime}`;
 
   zip.file('imsmanifest.xml', buildManifest(document, pdfFileName));
   zip.file('index.html', buildIndex(document, pdfFileName));
   zip.file('styles.css', styles);
-  zip.file('runtime.js', runtime);
+  zip.file('runtime.js', combinedRuntime);
   zip.file(`pdfs/${pdfFileName}`, document.file);
-  zip.file('vendor/pdf.min.js', pdfLibrary);
   zip.file('vendor/pdf.worker.min.js', pdfWorker);
   zip.file('vendor/PDFJS-LICENSE.txt', pdfJsLicense);
   zip.file('pdf-course-metadata.json', JSON.stringify({
@@ -326,7 +334,6 @@ export const buildPdfScormPackage = async (
     'imsmanifest.xml',
     'index.html',
     'runtime.js',
-    'vendor/pdf.min.js',
     'vendor/pdf.worker.min.js',
     'vendor/PDFJS-LICENSE.txt',
     `pdfs/${pdfFileName}`,
