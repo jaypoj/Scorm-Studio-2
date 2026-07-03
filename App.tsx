@@ -20,6 +20,9 @@ import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, 
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
+import { PdfCourseEditor } from './features/pdfCourse/PdfCourseEditor';
+import { createPdfCourseProject, openPdfCourseProject } from './features/pdfCourse/pdfProjectZip';
+import { PdfCourseProject } from './features/pdfCourse/types';
 
 const App: React.FC = () => {
   const [context, setContext] = useState<ProjectContext | null>(null);
@@ -41,8 +44,11 @@ const App: React.FC = () => {
   const [ttsDiagnosticReport, setTtsDiagnosticReport] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [pdfCourseProject, setPdfCourseProject] = useState<PdfCourseProject | null>(null);
   const [isSiteUnlocked, setIsSiteUnlocked] = useState(() => sessionStorage.getItem('scorm_studio_unlocked') === 'true');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfCreateInputRef = useRef<HTMLInputElement>(null);
+  const pdfOpenInputRef = useRef<HTMLInputElement>(null);
   
   // Integrity Scan State
   const [isScanning, setIsScanning] = useState(false);
@@ -283,6 +289,31 @@ const App: React.FC = () => {
   };
 
   const openFolderUpload = () => fileInputRef.current?.click();
+
+  const handleCreatePdfCourse = async (files: File[]) => {
+    if (!files.length) return;
+    setError(null);
+    try {
+      const firstName = files[0].name.replace(/\.(pdf|zip)$/i, '').replace(/[_-]+/g, ' ').trim();
+      setPdfCourseProject(await createPdfCourseProject(files, firstName ? `${firstName} PDF Course` : 'PDF Compliance Course'));
+    } catch (pdfError) {
+      setError(pdfError instanceof Error ? pdfError.message : String(pdfError));
+    } finally {
+      if (pdfCreateInputRef.current) pdfCreateInputRef.current.value = '';
+    }
+  };
+
+  const handleOpenPdfCourse = async (file?: File) => {
+    if (!file) return;
+    setError(null);
+    try {
+      setPdfCourseProject(await openPdfCourseProject(file));
+    } catch (pdfError) {
+      setError(pdfError instanceof Error ? pdfError.message : String(pdfError));
+    } finally {
+      if (pdfOpenInputRef.current) pdfOpenInputRef.current.value = '';
+    }
+  };
 
   // Unified opener: prefer native folder access, fall back to browser upload mode.
   const handleOpenFolder = async () => {
@@ -1160,7 +1191,7 @@ const App: React.FC = () => {
   };
 
   // Login / Load Screen
-  if (!context && view !== 'project-select') {
+  if (!context && !pdfCourseProject && view !== 'project-select') {
     return (
       <div className="theme-dark min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
          <div className="bg-white p-10 rounded-xl shadow-xl max-w-lg w-full text-center space-y-6">
@@ -1169,22 +1200,41 @@ const App: React.FC = () => {
             </div>
             <h1 className="text-3xl font-bold text-slate-800">SCORM Architect Pro</h1>
             <p className="text-slate-500 text-sm">
-                Open your project <strong>folder</strong>. The app will detect the <code>.scormproj</code> file and the <code>media</code> folder automatically.
+                Choose the standard course builder or the separate PDF compliance/SOP builder.
             </p>
-            
-            <button 
-                onClick={handleOpenFolder}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
-            >
-                <FolderOpen className="w-5 h-5" />
-                Open Project Folder
-            </button>
+
             <button 
                 onClick={() => setIsNewCourseOpen(true)}
-                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
             >
                 <FilePlus2 className="w-5 h-5" />
-                Create New Course
+                Create New Standard SCORM Course
+            </button>
+            <button 
+                onClick={handleOpenFolder}
+                className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+            >
+                <FolderOpen className="w-5 h-5" />
+                Open Standard SCORM Course
+            </button>
+            <div className="my-2 flex items-center gap-3 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">
+              <span className="h-px flex-1 bg-slate-200" />
+              PDF compliance/SOP
+              <span className="h-px flex-1 bg-slate-200" />
+            </div>
+            <button
+                onClick={() => pdfCreateInputRef.current?.click()}
+                className="w-full py-3 bg-[#a9472b] hover:bg-[#8d3823] text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+            >
+                <FilePlus2 className="w-5 h-5" />
+                Create New PDF Course
+            </button>
+            <button
+                onClick={() => pdfOpenInputRef.current?.click()}
+                className="w-full py-3 bg-[#41644a] hover:bg-[#34513c] text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+            >
+                <FolderOpen className="w-5 h-5" />
+                Open PDF Course
             </button>
             <input 
                 ref={fileInputRef}
@@ -1195,6 +1245,21 @@ const App: React.FC = () => {
                 multiple
                 className="hidden"
                 onChange={handleSandboxSelect}
+            />
+            <input
+                ref={pdfCreateInputRef}
+                type="file"
+                accept=".pdf,.zip,application/pdf,application/zip"
+                multiple
+                className="hidden"
+                onChange={event => handleCreatePdfCourse(Array.from(event.target.files || []))}
+            />
+            <input
+                ref={pdfOpenInputRef}
+                type="file"
+                accept=".zip,.pdfcourse"
+                className="hidden"
+                onChange={event => handleOpenPdfCourse(event.target.files?.[0])}
             />
 
             {error && (
@@ -1225,6 +1290,16 @@ const App: React.FC = () => {
 
   if (!isSiteUnlocked) {
     return <PasswordGate onUnlock={() => setIsSiteUnlocked(true)} />;
+  }
+
+  if (pdfCourseProject) {
+    return (
+      <PdfCourseEditor
+        project={pdfCourseProject}
+        onChange={setPdfCourseProject}
+        onClose={() => setPdfCourseProject(null)}
+      />
+    );
   }
 
   // Project Select Screen
