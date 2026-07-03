@@ -240,7 +240,11 @@ async function render(){
       restore();
       if(!completed)call('LMSSetValue','cmi.core.lesson_status','incomplete');
     }
-    const loadingTask=pdfApi.getDocument(config.pdfPath);
+    const pdfResponse=await fetch(config.pdfPath,{credentials:'same-origin'});
+    if(!pdfResponse.ok)throw new Error('PDF request failed with HTTP '+pdfResponse.status+' for '+config.pdfPath);
+    const pdfBytes=new Uint8Array(await pdfResponse.arrayBuffer());
+    if(!pdfBytes.byteLength)throw new Error('The packaged PDF file was empty.');
+    const loadingTask=pdfApi.getDocument({data:pdfBytes});
     const pdf=await loadingTask.promise;
     totalPages=pdf.numPages;
     for(let pageNumber=1;pageNumber<=totalPages;pageNumber++){

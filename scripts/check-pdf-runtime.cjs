@@ -19,6 +19,12 @@ const runtime = runtimeMatch[1];
 if (!runtime.startsWith(';(function(){') || !runtime.endsWith('})();')) {
   throw new Error('The generated course runtime must remain isolated in an IIFE.');
 }
+if (!runtime.includes('pdfApi.getDocument({data:pdfBytes})')) {
+  throw new Error('The course runtime must pass packaged PDF bytes to PDF.js.');
+}
+if (runtime.includes('pdfApi.getDocument(config.pdfPath)')) {
+  throw new Error('PDF.js 6 does not accept the legacy string-path getDocument call.');
+}
 
 new vm.Script(`${worker}\n${library}\n${runtime}`, {
   filename: 'generated-pdf-course-runtime.js',
