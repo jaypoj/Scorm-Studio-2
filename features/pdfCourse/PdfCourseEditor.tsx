@@ -1,9 +1,9 @@
 import React, { useRef, useState } from 'react';
 import { ArrowLeft, CheckCircle2, Download, Eye, FileArchive, FilePlus2, Save, ShieldCheck, Trash2, X } from 'lucide-react';
 import { buildPdfScormPackage, PdfScormPackage } from './pdfCourseExport';
-import { buildPdfCourseProjectZip, createPdfCourseProject, downloadBlob } from './pdfProjectZip';
+import { applyBatchSettingsToDocument, buildPdfCourseProjectZip, createPdfCourseProject, downloadBlob } from './pdfProjectZip';
 import { PdfCoursePreview } from './PdfCoursePreview';
-import { PdfCourseDocument, PdfCourseProject } from './types';
+import { DEFAULT_PDF_BATCH_SETTINGS, PdfBatchSettings, PdfCourseDocument, PdfCourseProject } from './types';
 
 interface PdfCourseEditorProps {
   project: PdfCourseProject;
@@ -22,6 +22,11 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
   const [preparedPackages, setPreparedPackages] = useState<PdfScormPackage[]>([]);
   const [busyMessage, setBusyMessage] = useState('');
   const [error, setError] = useState('');
+  const isBatch = project.workflowMode === 'batch';
+  const batchSettings: PdfBatchSettings = {
+    ...DEFAULT_PDF_BATCH_SETTINGS,
+    ...(project.batchSettings || {}),
+  };
 
   const updateDocument = (id: string, patch: Partial<PdfCourseDocument>) => {
     onChange(updateTimestamp({
@@ -34,13 +39,46 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
     }));
   };
 
+  const setBatchSettings = (settings: PdfBatchSettings) => {
+    onChange(updateTimestamp({
+      ...project,
+      batchSettings: settings,
+      documents: project.documents.map(document => applyBatchSettingsToDocument(document, settings)),
+    }));
+  };
+
+  const updateBatchSettings = (patch: Partial<PdfBatchSettings>) => {
+    const next = {
+      ...batchSettings,
+      ...patch,
+      customize: true,
+      requiredScrollThreshold: Math.min(
+        100,
+        Math.max(1, Number(patch.requiredScrollThreshold ?? batchSettings.requiredScrollThreshold) || 100),
+      ),
+    };
+    setBatchSettings(next);
+  };
+
+  const setBatchCustomization = (customize: boolean) => {
+    setBatchSettings(customize
+      ? { ...batchSettings, customize: true }
+      : { ...DEFAULT_PDF_BATCH_SETTINGS });
+  };
+
   const addDocuments = async (files: File[]) => {
     if (!files.length) return;
     setError('');
     setBusyMessage('Reading PDF files...');
     try {
-      const imported = await createPdfCourseProject(files, project.name);
-      onChange(updateTimestamp({ ...project, documents: [...project.documents, ...imported.documents] }));
+      const imported = await createPdfCourseProject(files, project.name, isBatch ? 'batch' : 'single');
+      const importedDocuments = isBatch
+        ? imported.documents.map(document => applyBatchSettingsToDocument(document, batchSettings))
+        : imported.documents;
+      onChange(updateTimestamp({
+        ...project,
+        documents: isBatch ? [...project.documents, ...importedDocuments] : importedDocuments,
+      }));
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : String(importError));
     } finally {
@@ -112,13 +150,15 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
               <ArrowLeft className="h-5 w-5" />
             </button>
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#a9472b]">PDF compliance builder</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#a9472b]">
+                {isBatch ? 'Batch PDF compliance builder' : 'Single PDF compliance builder'}
+              </p>
               <h1 className="font-serif text-2xl font-bold sm:text-3xl">{project.name}</h1>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 font-sans text-sm">
             <button onClick={() => addInputRef.current?.click()} className="flex items-center gap-2 border border-[#18221d] bg-white px-4 py-2 font-bold hover:bg-[#f4f0e7]">
-              <FilePlus2 className="h-4 w-4" /> Add PDFs or ZIP
+              <FilePlus2 className="h-4 w-4" /> {isBatch ? 'Add PDFs or ZIP' : 'Replace PDF'}
             </button>
             <button onClick={saveProject} className="flex items-center gap-2 border border-[#18221d] bg-[#18221d] px-4 py-2 font-bold text-white hover:bg-[#2e3a33]">
               <Save className="h-4 w-4" /> Save PDF Course
@@ -131,7 +171,7 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
             ref={addInputRef}
             type="file"
             accept=".pdf,.zip,application/pdf,application/zip"
-            multiple
+            multiple={isBatch}
             className="hidden"
             onChange={event => addDocuments(Array.from(event.target.files || []))}
           />
@@ -148,7 +188,9 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
               className="mt-2 w-full border-b-2 border-[#18221d] bg-transparent py-2 font-serif text-2xl font-bold outline-none"
             />
             <p className="mt-3 max-w-3xl font-sans text-sm leading-relaxed text-slate-600">
-              Each PDF exports as an independent SCORM 1.2 activity. This gives Moodle supervisors the cleanest completion report per SOP.
+              {isBatch
+                ? 'Every PDF uses one shared settings profile and exports as its own independent SCORM 1.2 activity.'
+                : 'This PDF exports as an independent SCORM 1.2 activity for clean Moodle completion reporting.'}
             </p>
           </div>
           <div className="border-2 border-[#41644a] bg-[#e6efe6] p-5">
@@ -156,6 +198,95 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
             <p className="mt-2 font-sans text-sm leading-relaxed text-[#3d5543]">The learner must reach the configured document threshold and then click acknowledgement. Opening the activity never marks it complete.</p>
           </div>
         </section>
+
+        {isBatch && (
+          <section className="border-2 border-[#18221d] bg-[#fffdf7] shadow-sm">
+            <div className="flex flex-col justify-between gap-4 border-b border-[#c9bea8] bg-[#f4f0e7] p-5 sm:flex-row sm:items-center">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a9472b]">One profile for every package</p>
+                <h2 className="font-serif text-2xl font-bold">Batch settings</h2>
+                <p className="mt-1 font-sans text-sm text-slate-600">These settings always apply to the entire PDF list. There are no partial-list overrides.</p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-3 border border-[#93866e] bg-white px-4 py-3 font-sans text-sm font-bold">
+                <input
+                  type="checkbox"
+                  checked={batchSettings.customize}
+                  onChange={event => setBatchCustomization(event.target.checked)}
+                  className="h-4 w-4 accent-[#a9472b]"
+                />
+                Customize batch settings
+              </label>
+            </div>
+
+            {!batchSettings.customize ? (
+              <div className="grid gap-3 p-5 font-sans text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div className="border border-[#c9bea8] bg-white p-3"><strong className="block text-xs uppercase text-slate-500">Progress</strong>100% document review</div>
+                <div className="border border-[#c9bea8] bg-white p-3"><strong className="block text-xs uppercase text-slate-500">Completion</strong>Review + acknowledgement</div>
+                <div className="border border-[#c9bea8] bg-white p-3"><strong className="block text-xs uppercase text-slate-500">Instructions</strong>Standard review message</div>
+                <div className="border border-[#c9bea8] bg-white p-3"><strong className="block text-xs uppercase text-slate-500">Estimated time</strong>Not specified</div>
+              </div>
+            ) : (
+              <div className="grid gap-5 p-5 lg:grid-cols-2">
+                <div className="space-y-4">
+                  <label className="block font-sans text-xs font-bold text-slate-600">Description/instructions
+                    <textarea
+                      value={batchSettings.description}
+                      onChange={event => updateBatchSettings({ description: event.target.value })}
+                      className="mt-1 min-h-24 w-full resize-y border border-[#c9bea8] bg-white p-3 font-normal text-slate-900"
+                    />
+                  </label>
+                  <label className="block font-sans text-xs font-bold text-slate-600">Acknowledgement text
+                    <textarea
+                      value={batchSettings.acknowledgementText}
+                      onChange={event => updateBatchSettings({ acknowledgementText: event.target.value })}
+                      className="mt-1 min-h-24 w-full resize-y border border-[#c9bea8] bg-white p-3 font-normal text-slate-900"
+                    />
+                  </label>
+                </div>
+                <div className="grid content-start gap-4 sm:grid-cols-2">
+                  <label className="font-sans text-xs font-bold text-slate-600">Category/group label
+                    <input
+                      value={batchSettings.category}
+                      onChange={event => updateBatchSettings({ category: event.target.value })}
+                      className="mt-1 w-full border border-[#c9bea8] bg-white p-3 font-normal text-slate-900"
+                    />
+                  </label>
+                  <label className="font-sans text-xs font-bold text-slate-600">Required progress
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={batchSettings.requiredScrollThreshold}
+                        onChange={event => updateBatchSettings({ requiredScrollThreshold: Number(event.target.value) || 100 })}
+                        className="w-24 border border-[#c9bea8] bg-white p-3 font-normal text-slate-900"
+                      />
+                      <span className="text-sm">%</span>
+                    </div>
+                  </label>
+                  <label className="font-sans text-xs font-bold text-slate-600">Estimated minutes per PDF
+                    <input
+                      type="number"
+                      min={1}
+                      value={batchSettings.estimatedTimeMinutes || ''}
+                      onChange={event => updateBatchSettings({
+                        estimatedTimeMinutes: event.target.value ? Math.max(1, Number(event.target.value)) : undefined,
+                      })}
+                      className="mt-1 w-full border border-[#c9bea8] bg-white p-3 font-normal text-slate-900"
+                    />
+                  </label>
+                  <label className="font-sans text-xs font-bold text-slate-600">Completion method
+                    <input
+                      value="End reached + acknowledgement clicked"
+                      readOnly
+                      className="mt-1 w-full border border-[#c9bea8] bg-[#f4f0e7] p-3 font-normal text-slate-700"
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         {busyMessage && <div className="border border-[#c9bea8] bg-[#fffdf7] p-3 font-sans text-sm">{busyMessage}</div>}
         {error && <div className="border border-red-300 bg-red-50 p-3 font-sans text-sm text-red-700">{error}</div>}
@@ -169,7 +300,29 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
             <FileArchive className="h-6 w-6 text-[#d6a48f]" />
           </div>
           <div className="divide-y divide-[#c9bea8]">
-            {project.documents.map((document, index) => (
+            {project.documents.map((document, index) => isBatch ? (
+              <article key={document.id} className="grid gap-5 p-5 md:grid-cols-[52px_minmax(0,1fr)_260px] md:items-center">
+                <div className="font-serif text-3xl font-bold text-[#a9472b]">{String(index + 1).padStart(2, '0')}</div>
+                <div className="min-w-0">
+                  <h3 className="font-serif text-xl font-bold">{document.title}</h3>
+                  <p className="mt-1 break-all font-mono text-[10px] text-slate-500">{document.fileName}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 font-sans text-[10px] font-bold uppercase tracking-wide text-[#41644a]">
+                    <span className="border border-[#9ab39f] bg-[#e6efe6] px-2 py-1">Shared batch settings</span>
+                    <span className="border border-[#c9bea8] bg-[#f4f0e7] px-2 py-1">Independent SCORM ZIP</span>
+                  </div>
+                </div>
+                <div className="space-y-3 font-sans">
+                  <div className={`text-[11px] font-bold uppercase tracking-wide ${document.exportStatus === 'exported' ? 'text-[#41644a]' : 'text-slate-500'}`}>
+                    {document.exportStatus === 'exported' ? 'Exported' : 'Not exported'}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setPreviewDocument(document)} className="flex items-center justify-center gap-1 border border-[#18221d] bg-white px-2 py-2 text-xs font-bold hover:bg-[#f4f0e7]"><Eye className="h-3.5 w-3.5" /> Preview</button>
+                    <button onClick={() => exportDocument(document)} className="flex items-center justify-center gap-1 bg-[#41644a] px-2 py-2 text-xs font-bold text-white hover:bg-[#34513c]"><Download className="h-3.5 w-3.5" /> Export</button>
+                  </div>
+                  <button onClick={() => removeDocument(document)} className="flex w-full items-center justify-center gap-1 px-2 py-1 text-xs font-bold text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /> Remove from batch</button>
+                </div>
+              </article>
+            ) : (
               <article key={document.id} className="grid gap-5 p-5 xl:grid-cols-[52px_minmax(260px,1.2fr)_minmax(260px,1fr)_220px]">
                 <div className="font-serif text-3xl font-bold text-[#a9472b]">{String(index + 1).padStart(2, '0')}</div>
                 <div className="space-y-3">
@@ -229,14 +382,18 @@ export const PdfCourseEditor: React.FC<PdfCourseEditorProps> = ({ project, onCha
               <div className="p-12 text-center">
                 <FilePlus2 className="mx-auto h-10 w-10 text-[#93866e]" />
                 <h3 className="mt-3 font-serif text-xl font-bold">No PDFs in this project</h3>
-                <button onClick={() => addInputRef.current?.click()} className="mt-4 bg-[#18221d] px-5 py-2 font-sans text-sm font-bold text-white">Add PDFs or ZIP</button>
+                <button onClick={() => addInputRef.current?.click()} className="mt-4 bg-[#18221d] px-5 py-2 font-sans text-sm font-bold text-white">
+                  {isBatch ? 'Add PDFs or ZIP' : 'Choose PDF'}
+                </button>
               </div>
             )}
           </div>
         </section>
 
         <p className="font-sans text-xs text-slate-500">
-          Combined multi-PDF SCORM export is intentionally not the primary workflow. One PDF per SCORM activity provides cleaner Moodle completion reporting and assignment control.
+          {isBatch
+            ? 'Batch export always creates one independent Moodle SCORM ZIP per PDF. Settings apply to the complete list.'
+            : 'One PDF per SCORM activity provides clean Moodle completion reporting and assignment control.'}
         </p>
       </main>
 

@@ -16,13 +16,13 @@ import { importLegacyScormFromFolder, importLegacyScormFromZip } from './service
 import { BinaryDecoder } from './services/binaryDecoder';
 import { formatGeminiQuotaGuidance, parseGeminiQuotaError, recordGeminiQuotaEvent } from './services/geminiQuota';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
-import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, History, Trash2 } from 'lucide-react';
+import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2 } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
 import { PdfCourseEditor } from './features/pdfCourse/PdfCourseEditor';
 import { createPdfCourseProject, openPdfCourseProject } from './features/pdfCourse/pdfProjectZip';
-import { PdfCourseProject } from './features/pdfCourse/types';
+import { PdfCourseProject, PdfCourseWorkflowMode } from './features/pdfCourse/types';
 
 const App: React.FC = () => {
   const [context, setContext] = useState<ProjectContext | null>(null);
@@ -48,6 +48,7 @@ const App: React.FC = () => {
   const [isSiteUnlocked, setIsSiteUnlocked] = useState(() => sessionStorage.getItem('scorm_studio_unlocked') === 'true');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfCreateInputRef = useRef<HTMLInputElement>(null);
+  const pdfBatchCreateInputRef = useRef<HTMLInputElement>(null);
   const pdfOpenInputRef = useRef<HTMLInputElement>(null);
   
   // Integrity Scan State
@@ -290,16 +291,21 @@ const App: React.FC = () => {
 
   const openFolderUpload = () => fileInputRef.current?.click();
 
-  const handleCreatePdfCourse = async (files: File[]) => {
+  const handleCreatePdfCourse = async (files: File[], workflowMode: PdfCourseWorkflowMode) => {
     if (!files.length) return;
     setError(null);
     try {
       const firstName = files[0].name.replace(/\.(pdf|zip)$/i, '').replace(/[_-]+/g, ' ').trim();
-      setPdfCourseProject(await createPdfCourseProject(files, firstName ? `${firstName} PDF Course` : 'PDF Compliance Course'));
+      const fallbackName = workflowMode === 'batch' ? 'Batch PDF Courses' : 'PDF Compliance Course';
+      const projectName = firstName
+        ? `${firstName} ${workflowMode === 'batch' ? 'Batch PDF Courses' : 'PDF Course'}`
+        : fallbackName;
+      setPdfCourseProject(await createPdfCourseProject(files, projectName, workflowMode));
     } catch (pdfError) {
       setError(pdfError instanceof Error ? pdfError.message : String(pdfError));
     } finally {
       if (pdfCreateInputRef.current) pdfCreateInputRef.current.value = '';
+      if (pdfBatchCreateInputRef.current) pdfBatchCreateInputRef.current.value = '';
     }
   };
 
@@ -1222,13 +1228,22 @@ const App: React.FC = () => {
               PDF compliance/SOP
               <span className="h-px flex-1 bg-slate-200" />
             </div>
-            <button
-                onClick={() => pdfCreateInputRef.current?.click()}
-                className="w-full py-3 bg-[#a9472b] hover:bg-[#8d3823] text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
-            >
-                <FilePlus2 className="w-5 h-5" />
-                Create New PDF Course
-            </button>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <button
+                  onClick={() => pdfCreateInputRef.current?.click()}
+                  className="w-full py-3 px-3 bg-[#a9472b] hover:bg-[#8d3823] text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+              >
+                  <FilePlus2 className="w-5 h-5 shrink-0" />
+                  <span>Create Single PDF Course</span>
+              </button>
+              <button
+                  onClick={() => pdfBatchCreateInputRef.current?.click()}
+                  className="w-full py-3 px-3 bg-[#8a5a32] hover:bg-[#704725] text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+              >
+                  <FileArchive className="w-5 h-5 shrink-0" />
+                  <span>Create Batch PDF Courses</span>
+              </button>
+            </div>
             <button
                 onClick={() => pdfOpenInputRef.current?.click()}
                 className="w-full py-3 bg-[#41644a] hover:bg-[#34513c] text-white font-semibold rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
@@ -1250,9 +1265,16 @@ const App: React.FC = () => {
                 ref={pdfCreateInputRef}
                 type="file"
                 accept=".pdf,.zip,application/pdf,application/zip"
+                className="hidden"
+                onChange={event => handleCreatePdfCourse(Array.from(event.target.files || []), 'single')}
+            />
+            <input
+                ref={pdfBatchCreateInputRef}
+                type="file"
+                accept=".pdf,.zip,application/pdf,application/zip"
                 multiple
                 className="hidden"
-                onChange={event => handleCreatePdfCourse(Array.from(event.target.files || []))}
+                onChange={event => handleCreatePdfCourse(Array.from(event.target.files || []), 'batch')}
             />
             <input
                 ref={pdfOpenInputRef}

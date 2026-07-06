@@ -1,12 +1,16 @@
 import JSZip from 'jszip';
 import {
   DEFAULT_ACKNOWLEDGEMENT_TEXT,
+  DEFAULT_PDF_BATCH_SETTINGS,
+  DEFAULT_PDF_DESCRIPTION,
   PDF_COURSE_PROJECT_TYPE,
   PDF_COURSE_SCHEMA_VERSION,
+  PdfBatchSettings,
   PdfCourseDocument,
   PdfCourseDocumentRecord,
   PdfCourseProject,
   PdfCourseProjectRecord,
+  PdfCourseWorkflowMode,
 } from './types';
 
 const normalizePath = (value: string) => value.replace(/\\/g, '/').replace(/^\/+/, '');
@@ -22,7 +26,7 @@ const createDocument = (file: File, index: number): PdfCourseDocument => ({
   title: fileStem(file.name) || `SOP ${index + 1}`,
   fileName: sanitizePdfFileName(file.name.toLowerCase().endsWith('.pdf') ? file.name : `${file.name}.pdf`),
   sopNumber: '',
-  description: 'Review the complete document, then acknowledge your understanding.',
+  description: DEFAULT_PDF_DESCRIPTION,
   category: '',
   acknowledgementText: DEFAULT_ACKNOWLEDGEMENT_TEXT,
   requiredScrollThreshold: 100,
@@ -55,10 +59,35 @@ const extractPdfFiles = async (files: File[]) => {
   return pdfs;
 };
 
-export const createPdfCourseProject = async (files: File[], projectName = 'PDF Compliance Course') => {
+export const applyBatchSettingsToDocument = (
+  document: PdfCourseDocument,
+  settings: PdfBatchSettings,
+): PdfCourseDocument => ({
+  ...document,
+  description: settings.description,
+  category: settings.category,
+  acknowledgementText: settings.acknowledgementText,
+  requiredScrollThreshold: settings.requiredScrollThreshold,
+  estimatedTimeMinutes: settings.estimatedTimeMinutes,
+  completionMethod: 'progress-and-acknowledgement',
+  exportStatus: 'not-exported',
+});
+
+export const createPdfCourseProject = async (
+  files: File[],
+  projectName = 'PDF Compliance Course',
+  workflowMode: PdfCourseWorkflowMode = 'single',
+) => {
   const pdfFiles = await extractPdfFiles(files);
   if (!pdfFiles.length) throw new Error('Select at least one PDF, or a ZIP that contains PDF files.');
+  if (workflowMode === 'single' && pdfFiles.length > 1) {
+    throw new Error('Single PDF Course accepts one PDF. Use Batch PDF Courses for multiple files.');
+  }
   const now = new Date().toISOString();
+  const batchSettings = workflowMode === 'batch' ? { ...DEFAULT_PDF_BATCH_SETTINGS } : undefined;
+  const documents = pdfFiles.map(createDocument).map(document => (
+    batchSettings ? applyBatchSettingsToDocument(document, batchSettings) : document
+  ));
   return {
     projectType: PDF_COURSE_PROJECT_TYPE,
     schemaVersion: PDF_COURSE_SCHEMA_VERSION,
@@ -67,7 +96,9 @@ export const createPdfCourseProject = async (files: File[], projectName = 'PDF C
     createdAt: now,
     updatedAt: now,
     scormVersion: '1.2',
-    documents: pdfFiles.map(createDocument),
+    workflowMode,
+    batchSettings,
+    documents,
   } satisfies PdfCourseProject;
 };
 
@@ -122,6 +153,14 @@ export const openPdfCourseProject = async (file: File): Promise<PdfCourseProject
 
   return {
     ...record,
+    workflowMode: record.workflowMode === 'batch' ? 'batch' : 'single',
+    batchSettings: record.workflowMode === 'batch'
+      ? {
+          ...DEFAULT_PDF_BATCH_SETTINGS,
+          ...(record.batchSettings || {}),
+          requiredScrollThreshold: Math.min(100, Math.max(1, Number(record.batchSettings?.requiredScrollThreshold) || 100)),
+        }
+      : undefined,
     documents,
     updatedAt: new Date().toISOString(),
   };
