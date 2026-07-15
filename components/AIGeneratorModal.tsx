@@ -7,9 +7,10 @@ import { DEFAULT_GEMINI_MODEL } from '../constants';
 interface AIGeneratorModalProps {
   onClose: () => void;
   onTopicGenerated: (topic: Partial<Topic>) => void;
+  aiSettings: AISettings;
 }
 
-export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({ onClose, onTopicGenerated }) => {
+export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({ onClose, onTopicGenerated, aiSettings }) => {
   const [title, setTitle] = useState('');
   const [sourceText, setSourceText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -22,9 +23,11 @@ export const AIGeneratorModal: React.FC<AIGeneratorModalProps> = ({ onClose, onT
     setError(null);
 
     try {
-      // Use default model if none specified in global settings (not passed here currently)
-      const tempSettings: AISettings = { model: DEFAULT_GEMINI_MODEL as any };
-      const result = await generateTopicContent(tempSettings, title, sourceText);
+      const generationSettings: AISettings = {
+        ...aiSettings,
+        model: aiSettings.model || DEFAULT_GEMINI_MODEL,
+      };
+      const result = await generateTopicContent(generationSettings, title, sourceText);
       onTopicGenerated(result);
       onClose();
     } catch (err: any) {

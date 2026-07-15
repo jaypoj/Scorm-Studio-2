@@ -207,8 +207,8 @@ export class ScormManager {
         title: project.courseData?.title || project.project?.name || 'Untitled Course',
         difficulty: project.courseData?.difficulty || 1,
         template: project.courseData?.template || 'default',
-        topics: project.courseData?.topics || courseContent.topics.map(t => t.title),
-        customTopics: project.courseData?.customTopics || null,
+        topics: courseContent.topics.map(t => t.title),
+        customTopics: project.courseData?.customTopics ? courseContent.topics.map(t => t.title) : null,
       },
       courseContent,
       jsonImportData: project.jsonImportData || {

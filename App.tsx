@@ -36,6 +36,8 @@ const App: React.FC = () => {
   const [newCourseError, setNewCourseError] = useState<string | null>(null);
   const [newCourseStatus, setNewCourseStatus] = useState<string | null>(null);
   const [newCourseProgress, setNewCourseProgress] = useState<number | null>(null);
+  const [isAddingTopic, setIsAddingTopic] = useState(false);
+  const [newTopicTitle, setNewTopicTitle] = useState('');
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string | null>(null);
   const [restorePointCount, setRestorePointCount] = useState(0);
   const [pronunciationConfig, setPronunciationConfig] = useState<PronunciationConfig>({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
@@ -684,8 +686,14 @@ const App: React.FC = () => {
         const newTopics = prev.courseContent.topics.map(t => 
              t.id === updatedPage.id ? (updatedPage as Topic) : t
         );
+        const topicTitles = newTopics.map(t => t.title);
         return {
              ...prev,
+             courseData: {
+                ...prev.courseData,
+                topics: topicTitles,
+                customTopics: prev.courseData.customTopics ? topicTitles : prev.courseData.customTopics,
+             },
              courseContent: { ...prev.courseContent, topics: newTopics }
         };
       });
@@ -957,31 +965,64 @@ const App: React.FC = () => {
     }
   };
 
-  const addAITopic = (partialTopic: Partial<Topic>) => {
-    updateProjectData(prev => {
-        const newTopic: Topic = {
-            id: `topic-${Date.now()}`,
-            title: partialTopic.title || 'New Topic',
-            content: partialTopic.content || '',
-            narration: partialTopic.narration || '',
-            duration: 5,
-            imageKeywords: [],
-            imagePrompts: partialTopic.imagePrompts || [],
-            media: [],
-            knowledgeCheck: partialTopic.knowledgeCheck
-        };
-        return {
-            ...prev,
-            courseContent: {
-                ...prev.courseContent,
-                topics: [...prev.courseContent.topics, newTopic]
-            }
-        };
-    });
-    // @ts-ignore
-    if(context?.projectData) {
-       setView('topic-list');
+  const createUniqueTopicId = (topics: Topic[]) => {
+    const existingIds = new Set(topics.map(topic => topic.id));
+    const baseId = `topic-${Date.now()}`;
+    let id = baseId;
+    let suffix = 1;
+    while (existingIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
     }
+    return id;
+  };
+
+  const addTopicPage = (partialTopic: Partial<Topic> = {}) => {
+    if (!context?.projectData) return;
+    const existingTopics = context.projectData.courseContent.topics;
+    const topicId = createUniqueTopicId(existingTopics);
+    const title = (partialTopic.title || '').trim() || `New Topic ${existingTopics.length + 1}`;
+    const blankTopic = ScormManager.createBlankTopic(topicId, title);
+    const newTopic: Topic = {
+      ...blankTopic,
+      ...partialTopic,
+      id: topicId,
+      title,
+      content: partialTopic.content ?? blankTopic.content,
+      narration: partialTopic.narration ?? blankTopic.narration,
+      duration: partialTopic.duration ?? blankTopic.duration,
+      imageKeywords: partialTopic.imageKeywords ?? blankTopic.imageKeywords,
+      imagePrompts: partialTopic.imagePrompts ?? blankTopic.imagePrompts,
+      videoSearchTerms: partialTopic.videoSearchTerms ?? blankTopic.videoSearchTerms,
+      media: partialTopic.media ?? blankTopic.media,
+      knowledgeCheck: partialTopic.knowledgeCheck ?? blankTopic.knowledgeCheck,
+    };
+
+    updateProjectData(prev => {
+      const topics = [...prev.courseContent.topics, newTopic];
+      const topicTitles = topics.map(topic => topic.title);
+      return {
+        ...prev,
+        courseData: {
+          ...prev.courseData,
+          topics: topicTitles,
+          customTopics: prev.courseData.customTopics ? topicTitles : prev.courseData.customTopics,
+        },
+        courseContent: {
+          ...prev.courseContent,
+          topics,
+          lastModified: new Date().toISOString(),
+        },
+      };
+    });
+
+    setView({ type: 'topic-edit', id: topicId });
+    setIsAddingTopic(false);
+    setNewTopicTitle('');
+  };
+
+  const addAITopic = (partialTopic: Partial<Topic>) => {
+    addTopicPage(partialTopic);
   };
   
   // Get all topic content combined for context (for distractors)
@@ -1036,13 +1077,59 @@ const App: React.FC = () => {
             <div className="max-w-4xl mx-auto">
                  <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-bold text-slate-800">Topic Management</h2>
-                    <button 
-                        onClick={() => setIsAIMode(true)}
-                        className="bg-purple-600 text-white px-4 py-2 rounded shadow hover:bg-purple-700 flex items-center gap-2"
-                    >
-                        <PlusCircle className="w-4 h-4" /> AI Generator
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button 
+                            onClick={() => setIsAddingTopic(true)}
+                            className="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 flex items-center gap-2"
+                        >
+                            <PlusCircle className="w-4 h-4" /> Add Topic Page
+                        </button>
+                        <button 
+                            onClick={() => setIsAIMode(true)}
+                            className="bg-purple-600 text-white px-4 py-2 rounded shadow hover:bg-purple-700 flex items-center gap-2"
+                        >
+                            <PlusCircle className="w-4 h-4" /> AI Generator
+                        </button>
+                    </div>
                  </div>
+                 {isAddingTopic && (
+                    <form
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            addTopicPage({ title: newTopicTitle });
+                        }}
+                        className="mb-4 bg-white border border-blue-200 rounded-lg p-4 shadow-sm"
+                    >
+                        <label className="block text-sm font-semibold text-slate-800 mb-2">New topic page title</label>
+                        <div className="flex flex-col gap-3 sm:flex-row">
+                            <input
+                                value={newTopicTitle}
+                                onChange={(event) => setNewTopicTitle(event.target.value)}
+                                className="min-w-0 flex-1 p-2 bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                placeholder={`New Topic ${projectData.courseContent.topics.length + 1}`}
+                                autoFocus
+                            />
+                            <div className="flex gap-2">
+                                <button
+                                    type="submit"
+                                    className="px-4 py-2 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700"
+                                >
+                                    Create Page
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsAddingTopic(false);
+                                        setNewTopicTitle('');
+                                    }}
+                                    className="px-4 py-2 bg-slate-100 text-slate-700 rounded font-semibold hover:bg-slate-200"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                 )}
                  <div className="space-y-2">
                      {projectData.courseContent.topics.map((t, i) => (
                           <div key={t.id} className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center hover:shadow-sm transition-shadow">
@@ -1482,6 +1569,7 @@ const App: React.FC = () => {
         <AIGeneratorModal 
           onClose={() => setIsAIMode(false)} 
           onTopicGenerated={addAITopic}
+          aiSettings={aiSettings}
         />
       )}
       
