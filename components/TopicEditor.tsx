@@ -866,7 +866,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
           id: `kc-${Date.now()}`,
           type: 'multiple-choice',
           question: 'New Knowledge Check Question',
-          correctAnswer: '',
+          correctAnswer: 'Option 1',
           options: ['Option 1', 'Option 2'],
           feedback: { correct: 'Correct!', incorrect: 'Incorrect, try again.' }
       };
@@ -893,6 +893,58 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       const currentQuestions = topic.knowledgeCheck?.questions || [];
       const newQuestions = currentQuestions.filter((_, i) => i !== index);
       onChange({ ...topic, knowledgeCheck: { ...(topic.knowledgeCheck || {}), questions: newQuestions } });
+  };
+
+  const getQuestionFeedback = (question: Question) => ({
+      correct: question.feedback?.correct || 'Correct!',
+      incorrect: question.feedback?.incorrect || 'Incorrect, try again.',
+  });
+
+  const getQuestionOptionsForEditor = (question: Question) => {
+      if (question.type === 'true-false') return ['true', 'false'];
+      if (!question.options?.length && question.correctAnswer?.trim()) return [question.correctAnswer, 'New distractor'];
+      return question.options?.length ? question.options : ['Option 1', 'Option 2'];
+  };
+
+  const updateQuestionType = (index: number, question: Question, type: Question['type']) => {
+      if (type === 'true-false') {
+          updateQuestion(index, {
+              ...question,
+              type,
+              correctAnswer: question.correctAnswer === 'false' ? 'false' : 'true',
+          });
+          return;
+      }
+
+      updateQuestion(index, {
+          ...question,
+          type,
+          options: question.options?.length ? question.options : ['Option 1', 'Option 2'],
+          correctAnswer: question.type === 'true-false' ? 'Option 1' : question.correctAnswer,
+      });
+  };
+
+  const updateQuestionOption = (questionIndex: number, question: Question, optionIndex: number, value: string) => {
+      const options = getQuestionOptionsForEditor(question);
+      const previousValue = options[optionIndex];
+      const nextOptions = [...options];
+      nextOptions[optionIndex] = value;
+      updateQuestion(questionIndex, {
+          ...question,
+          options: nextOptions,
+          correctAnswer: question.correctAnswer === previousValue ? value : question.correctAnswer,
+      });
+  };
+
+  const removeQuestionOption = (questionIndex: number, question: Question, optionIndex: number) => {
+      const options = getQuestionOptionsForEditor(question);
+      const removedValue = options[optionIndex];
+      const nextOptions = options.filter((_, index) => index !== optionIndex);
+      updateQuestion(questionIndex, {
+          ...question,
+          options: nextOptions,
+          correctAnswer: question.correctAnswer === removedValue ? (nextOptions[0] || '') : question.correctAnswer,
+      });
   };
 
   const handleSetMainImage = (mediaId: string) => {
@@ -1273,7 +1325,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                               <div className="flex items-center gap-2">
                                 <select 
                                   value={q.type}
-                                  onChange={(e) => updateQuestion(idx, { ...q, type: e.target.value as any })}
+                                  onChange={(e) => updateQuestionType(idx, q, e.target.value as Question['type'])}
                                   className="text-xs border-slate-300 rounded px-1 py-0.5 bg-white"
                                 >
                                   <option value="multiple-choice">Multiple Choice</option>
@@ -1295,7 +1347,112 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                       placeholder="Enter question text..."
                                     />
                                 </div>
-                                {/* Question Options Logic Omitted for brevity, assumed standard */}
+
+                                {q.type === 'multiple-choice' && (
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <label className="text-[10px] font-bold uppercase text-slate-500">Answer Options</label>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleGenerateDistractors(idx, q)}
+                                        disabled={loadingDistractors === q.id}
+                                        className="text-[10px] bg-purple-50 text-purple-700 px-2 py-1 rounded border border-purple-200 hover:bg-purple-100 flex items-center gap-1 transition-colors disabled:opacity-50"
+                                      >
+                                        {loadingDistractors === q.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bot className="w-3 h-3" />}
+                                        Auto-Generate Distractors
+                                      </button>
+                                    </div>
+                                    {getQuestionOptionsForEditor(q).map((option, optionIndex) => {
+                                      const optionCount = getQuestionOptionsForEditor(q).length;
+                                      const isCorrect = q.correctAnswer === option;
+                                      return (
+                                        <div key={optionIndex} className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] gap-2 items-center">
+                                          <div
+                                            className={`w-4 h-4 rounded-full border ${isCorrect ? 'bg-green-500 border-green-500' : 'border-slate-300 bg-white'}`}
+                                            title={isCorrect ? 'Correct answer' : 'Distractor'}
+                                          />
+                                          <input
+                                            type="text"
+                                            value={option}
+                                            onChange={(e) => updateQuestionOption(idx, q, optionIndex, e.target.value)}
+                                            className="min-w-0 p-2 bg-white text-slate-900 border border-slate-300 rounded text-sm focus:border-blue-500 focus:outline-none"
+                                            placeholder={`Option ${optionIndex + 1}`}
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => updateQuestion(idx, { ...q, options: getQuestionOptionsForEditor(q), correctAnswer: option })}
+                                            className="text-[10px] text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded hover:bg-green-100 whitespace-nowrap"
+                                          >
+                                            Set Correct
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => removeQuestionOption(idx, q, optionIndex)}
+                                            disabled={optionCount <= 2}
+                                            className="text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:hover:text-slate-400"
+                                            title={optionCount <= 2 ? 'Multiple-choice questions need at least two options' : 'Remove option'}
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                    <button
+                                      type="button"
+                                      onClick={() => updateQuestion(idx, { ...q, options: [...getQuestionOptionsForEditor(q), 'New Option'] })}
+                                      className="text-xs text-blue-600 flex items-center gap-1 mt-2"
+                                    >
+                                      <Plus className="w-3 h-3" /> Add Option
+                                    </button>
+                                  </div>
+                                )}
+
+                                {q.type === 'true-false' && (
+                                  <div className="space-y-2">
+                                    <label className="text-[10px] font-bold uppercase text-slate-500">Correct Answer</label>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => updateQuestion(idx, { ...q, correctAnswer: 'true' })}
+                                        className={`px-3 py-2 rounded border text-xs font-semibold ${q.correctAnswer === 'true' ? 'bg-green-50 border-green-500 text-green-700' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                                      >
+                                        True
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateQuestion(idx, { ...q, correctAnswer: 'false' })}
+                                        className={`px-3 py-2 rounded border text-xs font-semibold ${q.correctAnswer === 'false' ? 'bg-green-50 border-green-500 text-green-700' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+                                      >
+                                        False
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-1 gap-3 pt-3 border-t border-slate-200 lg:grid-cols-2">
+                                  <div>
+                                    <label className="flex items-center gap-1 text-[10px] font-bold text-green-600 uppercase mb-1">
+                                      <CheckCircle2 className="w-3 h-3" /> Correct Feedback
+                                    </label>
+                                    <textarea
+                                      value={getQuestionFeedback(q).correct}
+                                      onChange={(e) => updateQuestion(idx, { ...q, feedback: { ...getQuestionFeedback(q), correct: e.target.value } })}
+                                      rows={2}
+                                      className="w-full p-2 bg-white text-slate-900 border border-green-200 rounded text-xs focus:outline-none focus:border-green-400"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="flex items-center gap-1 text-[10px] font-bold text-red-600 uppercase mb-1">
+                                      <XCircle className="w-3 h-3" /> Incorrect Feedback
+                                    </label>
+                                    <textarea
+                                      value={getQuestionFeedback(q).incorrect}
+                                      onChange={(e) => updateQuestion(idx, { ...q, feedback: { ...getQuestionFeedback(q), incorrect: e.target.value } })}
+                                      rows={2}
+                                      className="w-full p-2 bg-white text-slate-900 border border-red-200 rounded text-xs focus:outline-none focus:border-red-400"
+                                    />
+                                  </div>
+                                </div>
                             </div>
                           </div>
                         ))}
