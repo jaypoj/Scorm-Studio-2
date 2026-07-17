@@ -1381,9 +1381,13 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                           <button
                                             type="button"
                                             onClick={() => updateQuestion(idx, { ...q, options: getQuestionOptionsForEditor(q), correctAnswer: option })}
-                                            className="text-[10px] text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded hover:bg-green-100 whitespace-nowrap"
+                                            className={`text-[10px] border px-2 py-1 rounded whitespace-nowrap font-semibold ${
+                                              isCorrect
+                                                ? 'bg-emerald-600 text-white border-emerald-500'
+                                                : 'bg-slate-900 text-white border-slate-700 hover:bg-emerald-700 hover:border-emerald-600'
+                                            }`}
                                           >
-                                            Set Correct
+                                            {isCorrect ? 'Correct' : 'Set Correct'}
                                           </button>
                                           <button
                                             type="button"

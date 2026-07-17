@@ -71,6 +71,12 @@ const emptyPage = (id: string, title: string) => ({
   media: [],
 });
 
+const normalizeOutputTheme = (value: unknown): ScormProject['scormConfig']['outputTheme'] => {
+  return value === 'legacy-green' || value === 'light-purple' || value === 'dark-violet'
+    ? value
+    : 'dark-violet';
+};
+
 export class ScormManager {
   static createBlankTopic(id: string, title: string) {
     return {
@@ -225,7 +231,7 @@ export class ScormManager {
         completionCriteria: project.scormConfig?.completionCriteria || 'passed',
         requireKnowledgeCheckBeforeContinue: Boolean(project.scormConfig?.requireKnowledgeCheckBeforeContinue),
         requireAudioCompletionBeforeContinue: Boolean(project.scormConfig?.requireAudioCompletionBeforeContinue),
-        outputTheme: project.scormConfig?.outputTheme || 'dark-violet',
+        outputTheme: normalizeOutputTheme(project.scormConfig?.outputTheme),
         contentMode: project.scormConfig?.contentMode || 'standard',
       },
     };

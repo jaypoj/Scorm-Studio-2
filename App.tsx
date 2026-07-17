@@ -1208,13 +1208,14 @@ const App: React.FC = () => {
                                 ...p,
                                 scormConfig: {
                                     ...p.scormConfig,
-                                    outputTheme: e.target.value as 'dark-violet' | 'legacy-green',
+                                    outputTheme: e.target.value as 'dark-violet' | 'legacy-green' | 'light-purple',
                                 }
                             }))}
                             className="w-full p-2 bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-purple-500 focus:outline-none"
                         >
                             <option value="dark-violet">Dark violet (default)</option>
                             <option value="legacy-green">Legacy green styleguide</option>
+                            <option value="light-purple">Light purple / gray</option>
                         </select>
                         <p className="text-sm text-slate-600 mt-2">Controls the color palette of the exported SCORM package only.</p>
                     </div>

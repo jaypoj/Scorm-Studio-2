@@ -123,7 +123,7 @@ export interface ScormProject {
     completionCriteria: string;
     requireKnowledgeCheckBeforeContinue: boolean;
     requireAudioCompletionBeforeContinue: boolean;
-    outputTheme: 'dark-violet' | 'legacy-green';
+    outputTheme: 'dark-violet' | 'legacy-green' | 'light-purple';
     contentMode?: 'standard' | 'ppt-import';
   };
 }
