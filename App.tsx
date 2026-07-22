@@ -16,7 +16,7 @@ import { importLegacyScormFromFolder, importLegacyScormFromZip } from './service
 import { BinaryDecoder } from './services/binaryDecoder';
 import { formatGeminiQuotaGuidance, parseGeminiQuotaError, recordGeminiQuotaEvent } from './services/geminiQuota';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
-import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2 } from 'lucide-react';
+import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
@@ -729,6 +729,46 @@ const App: React.FC = () => {
     setView('topic-list');
   };
 
+  const getTopicIntegritySignature = (topics: Topic[]) => topics
+    .map(topic => JSON.stringify(topic))
+    .sort()
+    .join('|');
+
+  const moveTopicPage = (topicId: string, direction: -1 | 1) => {
+    if (!context) return;
+
+    updateProjectData(prev => {
+      const currentTopics = prev.courseContent.topics;
+      const fromIndex = currentTopics.findIndex(topic => topic.id === topicId);
+      const toIndex = fromIndex + direction;
+      if (fromIndex < 0 || toIndex < 0 || toIndex >= currentTopics.length) return prev;
+
+      const nextTopics = [...currentTopics];
+      const [movedTopic] = nextTopics.splice(fromIndex, 1);
+      nextTopics.splice(toIndex, 0, movedTopic);
+
+      if (getTopicIntegritySignature(currentTopics) !== getTopicIntegritySignature(nextTopics)) {
+        console.warn('Topic move was cancelled because page integrity changed unexpectedly.');
+        return prev;
+      }
+
+      const topicTitles = nextTopics.map(topic => topic.title);
+      return {
+        ...prev,
+        courseData: {
+          ...prev.courseData,
+          topics: topicTitles,
+          customTopics: prev.courseData.customTopics ? topicTitles : prev.courseData.customTopics,
+        },
+        courseContent: {
+          ...prev.courseContent,
+          topics: nextTopics,
+          lastModified: new Date().toISOString(),
+        },
+      };
+    });
+  };
+
   const isPowerPointProject = (project: ScormProject) => project.scormConfig?.contentMode === 'ppt-import';
 
   const getEditablePages = (project: ScormProject) => isPowerPointProject(project)
@@ -1132,9 +1172,29 @@ const App: React.FC = () => {
                  )}
                  <div className="space-y-2">
                      {projectData.courseContent.topics.map((t, i) => (
-                          <div key={t.id} className="p-4 bg-white border border-slate-200 rounded flex justify-between items-center hover:shadow-sm transition-shadow">
-                              <span className="font-medium text-slate-700">{i + 1}. {t.title}</span>
-                              <div className="flex items-center gap-2">
+                          <div key={t.id} className="p-4 bg-white border border-slate-200 rounded flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center hover:shadow-sm transition-shadow">
+                              <span className="min-w-0 font-medium text-slate-700 truncate" title={t.title}>{i + 1}. {t.title}</span>
+                              <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                     type="button"
+                                     onClick={() => moveTopicPage(t.id, -1)}
+                                     disabled={i === 0}
+                                     className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                                     title="Move topic page up"
+                                     aria-label={`Move ${t.title} up`}
+                                  >
+                                     <ArrowUp className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                     type="button"
+                                     onClick={() => moveTopicPage(t.id, 1)}
+                                     disabled={i === projectData.courseContent.topics.length - 1}
+                                     className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                                     title="Move topic page down"
+                                     aria-label={`Move ${t.title} down`}
+                                  >
+                                     <ArrowDown className="w-4 h-4" />
+                                  </button>
                                   <button
                                      onClick={() => setView({ type: 'topic-edit', id: t.id })}
                                      className="text-blue-600 text-sm hover:underline"
