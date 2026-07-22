@@ -16,7 +16,7 @@ import { importLegacyScormFromFolder, importLegacyScormFromZip } from './service
 import { BinaryDecoder } from './services/binaryDecoder';
 import { formatGeminiQuotaGuidance, parseGeminiQuotaError, recordGeminiQuotaEvent } from './services/geminiQuota';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
-import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2, ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
@@ -38,6 +38,11 @@ const App: React.FC = () => {
   const [newCourseProgress, setNewCourseProgress] = useState<number | null>(null);
   const [isAddingTopic, setIsAddingTopic] = useState(false);
   const [newTopicTitle, setNewTopicTitle] = useState('');
+  const [topicDragState, setTopicDragState] = useState<{
+    draggedId: string | null;
+    overId: string | null;
+    position: 'before' | 'after' | null;
+  }>({ draggedId: null, overId: null, position: null });
   const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string | null>(null);
   const [restorePointCount, setRestorePointCount] = useState(0);
   const [pronunciationConfig, setPronunciationConfig] = useState<PronunciationConfig>({ tts: DEFAULT_TTS_SETTINGS, pronunciations: [] });
@@ -734,14 +739,14 @@ const App: React.FC = () => {
     .sort()
     .join('|');
 
-  const moveTopicPage = (topicId: string, direction: -1 | 1) => {
+  const reorderTopicPage = (topicId: string, targetIndex: number) => {
     if (!context) return;
 
     updateProjectData(prev => {
       const currentTopics = prev.courseContent.topics;
       const fromIndex = currentTopics.findIndex(topic => topic.id === topicId);
-      const toIndex = fromIndex + direction;
-      if (fromIndex < 0 || toIndex < 0 || toIndex >= currentTopics.length) return prev;
+      const toIndex = Math.max(0, Math.min(targetIndex, currentTopics.length - 1));
+      if (fromIndex < 0 || fromIndex === toIndex) return prev;
 
       const nextTopics = [...currentTopics];
       const [movedTopic] = nextTopics.splice(fromIndex, 1);
@@ -767,6 +772,30 @@ const App: React.FC = () => {
         },
       };
     });
+  };
+
+  const moveTopicPage = (topicId: string, direction: -1 | 1) => {
+    if (!context) return;
+    const fromIndex = context.projectData.courseContent.topics.findIndex(topic => topic.id === topicId);
+    if (fromIndex < 0) return;
+    reorderTopicPage(topicId, fromIndex + direction);
+  };
+
+  const getDragTargetIndex = (
+    topics: Topic[],
+    draggedTopicId: string,
+    targetTopicId: string,
+    position: 'before' | 'after'
+  ) => {
+    const fromIndex = topics.findIndex(topic => topic.id === draggedTopicId);
+    const targetIndex = topics.findIndex(topic => topic.id === targetTopicId);
+    if (fromIndex < 0 || targetIndex < 0 || draggedTopicId === targetTopicId) return null;
+    if (position === 'before') return targetIndex > fromIndex ? targetIndex - 1 : targetIndex;
+    return targetIndex < fromIndex ? targetIndex + 1 : targetIndex;
+  };
+
+  const resetTopicDragState = () => {
+    setTopicDragState({ draggedId: null, overId: null, position: null });
   };
 
   const isPowerPointProject = (project: ScormProject) => project.scormConfig?.contentMode === 'ppt-import';
@@ -1171,9 +1200,64 @@ const App: React.FC = () => {
                     </form>
                  )}
                  <div className="space-y-2">
-                     {projectData.courseContent.topics.map((t, i) => (
-                          <div key={t.id} className="p-4 bg-white border border-slate-200 rounded flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center hover:shadow-sm transition-shadow">
-                              <span className="min-w-0 font-medium text-slate-700 truncate" title={t.title}>{i + 1}. {t.title}</span>
+                     {projectData.courseContent.topics.map((t, i) => {
+                        const isDragging = topicDragState.draggedId === t.id;
+                        const isDropTarget = topicDragState.overId === t.id && topicDragState.draggedId !== t.id;
+                        return (
+                          <div
+                              key={t.id}
+                              onDragOver={(event) => {
+                                if (!topicDragState.draggedId || topicDragState.draggedId === t.id) return;
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = 'move';
+                                const rect = event.currentTarget.getBoundingClientRect();
+                                const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+                                if (topicDragState.overId !== t.id || topicDragState.position !== position) {
+                                  setTopicDragState(prev => ({ ...prev, overId: t.id, position }));
+                                }
+                              }}
+                              onDragLeave={(event) => {
+                                const nextTarget = event.relatedTarget;
+                                if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+                                if (topicDragState.overId === t.id) {
+                                  setTopicDragState(prev => ({ ...prev, overId: null, position: null }));
+                                }
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault();
+                                const draggedId = event.dataTransfer.getData('application/x-scorm-topic-id') || topicDragState.draggedId || event.dataTransfer.getData('text/plain');
+                                const position = topicDragState.position || 'before';
+                                const targetIndex = getDragTargetIndex(projectData.courseContent.topics, draggedId, t.id, position);
+                                resetTopicDragState();
+                                if (targetIndex !== null) reorderTopicPage(draggedId, targetIndex);
+                              }}
+                              className={`relative p-4 bg-white border rounded flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center hover:shadow-sm transition-shadow ${isDragging ? 'opacity-55 border-blue-300' : 'border-slate-200'} ${isDropTarget ? 'ring-2 ring-blue-200' : ''}`}
+                          >
+                              {isDropTarget && (
+                                  <div
+                                     className={`absolute left-4 right-4 h-1 rounded-full bg-blue-500 ${topicDragState.position === 'before' ? 'top-0' : 'bottom-0'}`}
+                                     aria-hidden="true"
+                                  />
+                              )}
+                              <div className="min-w-0 flex items-center gap-2">
+                                  <button
+                                     type="button"
+                                     draggable
+                                     onDragStart={(event) => {
+                                       event.dataTransfer.effectAllowed = 'move';
+                                       event.dataTransfer.setData('application/x-scorm-topic-id', t.id);
+                                       event.dataTransfer.setData('text/plain', t.id);
+                                       setTopicDragState({ draggedId: t.id, overId: null, position: null });
+                                     }}
+                                     onDragEnd={resetTopicDragState}
+                                     className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-200 text-slate-500 cursor-grab active:cursor-grabbing hover:bg-slate-100"
+                                     title="Drag to move topic page"
+                                     aria-label={`Drag to move ${t.title}`}
+                                  >
+                                     <GripVertical className="w-4 h-4" />
+                                  </button>
+                                  <span className="min-w-0 font-medium text-slate-700 truncate" title={t.title}>{i + 1}. {t.title}</span>
+                              </div>
                               <div className="flex items-center gap-2 shrink-0">
                                   <button
                                      type="button"
@@ -1211,7 +1295,8 @@ const App: React.FC = () => {
                                   </button>
                               </div>
                           </div>
-                      ))}
+                        );
+                      })}
                  </div>
             </div>
         )
