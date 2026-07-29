@@ -533,7 +533,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   const showMediaAttachError = (error: unknown) => {
     console.error('Failed to attach media', error);
-    alert(`Could not attach media:\n\n${getErrorMessage(error)}\n\nIf this is a folder permission issue, reopen the project folder and allow file access when prompted.`);
+    alert(`Could not attach media:\n\n${getErrorMessage(error)}\n\nReopen the project folder, then try the upload again. If the file appears in the media folder but not in the app, run Media Diagnostics.`);
   };
 
   const attachExternalImage = (url: string, title = 'External image') => {

@@ -617,18 +617,14 @@ const App: React.FC = () => {
   const ensureWritableDirectoryAccess = async (handle: FileSystemDirectoryHandle) => {
     const permissionHandle = handle as FileSystemDirectoryHandle & {
       queryPermission?: (descriptor?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
-      requestPermission?: (descriptor?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
     };
 
-    if (!permissionHandle.queryPermission || !permissionHandle.requestPermission) return;
+    if (!permissionHandle.queryPermission) return;
 
     const descriptor = { mode: 'readwrite' as const };
     const currentPermission = await permissionHandle.queryPermission(descriptor);
-    if (currentPermission === 'granted') return;
-
-    const requestedPermission = await permissionHandle.requestPermission(descriptor);
-    if (requestedPermission !== 'granted') {
-      throw new Error('Media folder write permission was denied. Reopen the project folder and allow file access when prompted.');
+    if (currentPermission === 'denied') {
+      throw new Error('Media folder write permission is blocked. Reopen the project folder and allow file access when prompted.');
     }
   };
 
