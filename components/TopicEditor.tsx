@@ -531,6 +531,11 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     onChange({ ...data, media: data.media ? [...data.media, newMedia] : [newMedia] });
   };
 
+  const showMediaAttachError = (error: unknown) => {
+    console.error('Failed to attach media', error);
+    alert(`Could not attach media:\n\n${getErrorMessage(error)}\n\nIf this is a folder permission issue, reopen the project folder and allow file access when prompted.`);
+  };
+
   const attachExternalImage = (url: string, title = 'External image') => {
     const shouldUse = window.confirm("This image URL could not be downloaded into the project, so quality could not be inspected. Attach it as an external image anyway?");
     if (!shouldUse) return;
@@ -547,9 +552,14 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    await attachFileAsMedia(file);
-    e.target.value = '';
+    try {
+      if (!file) return;
+      await attachFileAsMedia(file);
+    } catch (error) {
+      showMediaAttachError(error);
+    } finally {
+      e.target.value = '';
+    }
   };
 
   const importImageFromUrl = async (url = imageImportUrl.trim()) => {
@@ -577,8 +587,12 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     e.preventDefault();
     const file = Array.from(e.dataTransfer.files as FileList).find((f: File) => f.type.startsWith('image/'));
     const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
-    if (file) await attachFileAsMedia(file);
-    else if (url) await importImageFromUrl(url);
+    try {
+      if (file) await attachFileAsMedia(file);
+      else if (url) await importImageFromUrl(url);
+    } catch (error) {
+      showMediaAttachError(error);
+    }
   };
 
   const handleImagePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -586,7 +600,11 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     const url = e.clipboardData.getData('text/plain');
     if (file) {
       e.preventDefault();
-      await attachFileAsMedia(file, 'Pasted image');
+      try {
+        await attachFileAsMedia(file, 'Pasted image');
+      } catch (error) {
+        showMediaAttachError(error);
+      }
     } else if (/^https?:\/\//i.test(url)) {
       e.preventDefault();
       await importImageFromUrl(url);

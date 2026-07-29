@@ -614,12 +614,31 @@ const App: React.FC = () => {
     }
   };
 
+  const ensureWritableDirectoryAccess = async (handle: FileSystemDirectoryHandle) => {
+    const permissionHandle = handle as FileSystemDirectoryHandle & {
+      queryPermission?: (descriptor?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
+      requestPermission?: (descriptor?: { mode?: 'read' | 'readwrite' }) => Promise<PermissionState>;
+    };
+
+    if (!permissionHandle.queryPermission || !permissionHandle.requestPermission) return;
+
+    const descriptor = { mode: 'readwrite' as const };
+    const currentPermission = await permissionHandle.queryPermission(descriptor);
+    if (currentPermission === 'granted') return;
+
+    const requestedPermission = await permissionHandle.requestPermission(descriptor);
+    if (requestedPermission !== 'granted') {
+      throw new Error('Media folder write permission was denied. Reopen the project folder and allow file access when prompted.');
+    }
+  };
+
   const handleAssetCreate = async (file: File, id: string) => {
     if (!context?.assetsHandle) {
       alert("No asset folder linked.");
       return;
     }
     try {
+      await ensureWritableDirectoryAccess(context.assetsHandle);
       const fileHandle = await context.assetsHandle.getFileHandle(file.name, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(file);
