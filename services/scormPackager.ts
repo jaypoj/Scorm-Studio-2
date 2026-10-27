@@ -665,6 +665,9 @@ const COURSE_SETTINGS=${JSON.stringify({
   requireAudioCompletionBeforeContinue: Boolean(scormConfig?.requireAudioCompletionBeforeContinue),
 })};
 let current=0;
+let navigating=false;
+let failedPageIndex=-1;
+let lastLoadError='';
 const STORAGE_KEY='scormArchitectProgress';
 const parseJson=value=>{try{return value?JSON.parse(value):null}catch(error){return null}};
 function readBrowserStorage(name){try{const storage=window[name];return storage?storage.getItem(STORAGE_KEY):''}catch(error){return''}}
@@ -678,10 +681,53 @@ function el(id){return document.getElementById(id)}
 function getProgress(){return Math.round((visited.size/PAGES.length)*100)}
 function currentPageId(){return PAGES[current]?PAGES[current].id:''}
 function save(){const state={version:1,visited:Array.from(visited),knowledgeChecks:Array.from(completedKnowledgeChecks),audioPages:Array.from(completedAudioPages),currentPageId:currentPageId()};const serialized=JSON.stringify(state);writeBrowserStorage('sessionStorage',serialized);writeBrowserStorage('localStorage',serialized);const progress=getProgress();el('progress-fill').style.width=progress+'%';el('progress-text').textContent=progress+'% complete';if(window.SCORM){SCORM.set('cmi.suspend_data',serialized);SCORM.set('cmi.core.lesson_location',currentPageId());SCORM.set('cmi.core.exit','suspend');const currentStatus=String(SCORM.get('cmi.core.lesson_status')||'').toLowerCase();if(!['passed','failed'].includes(currentStatus)){SCORM.set('cmi.core.lesson_status',progress>=100?'completed':'incomplete')}SCORM.commit()}}
-function setNav(){document.querySelectorAll('.nav-item').forEach((n,i)=>n.classList.toggle('active',i===current));el('prev-button').disabled=current===0;el('next-button').textContent=current===PAGES.length-1?'Finish':'Next';updateNextGate()}
-async function loadPage(index){current=Math.max(0,Math.min(index,PAGES.length-1));const page=PAGES[current];const container=el('content-container');const res=await fetch('pages/'+page.id+'.html');container.innerHTML=await res.text();container.scrollTop=0;document.documentElement.scrollTop=0;document.body.scrollTop=0;initializeCaptions();initializeCompletionGate();visited.add(page.id);setNav();save();window.scrollTo(0,0)}
-function nextPage(){if(current<PAGES.length-1)loadPage(current+1);else{if(window.SCORM){SCORM.set('cmi.core.lesson_status','completed');SCORM.commit()}showAlert('Course complete')}}
-function prevPage(){if(current>0)loadPage(current-1)}
+function setNav(){
+  document.querySelectorAll('.nav-item').forEach((n,i)=>n.classList.toggle('active',i===current));
+  el('prev-button').disabled=navigating||current===0;
+  el('next-button').textContent=failedPageIndex>=0?'Retry Page':current===PAGES.length-1?'Finish':'Next';
+  updateNextGate();
+}
+async function loadPage(index){
+  if(navigating||!Number.isInteger(index)||index<0||index>=PAGES.length)return;
+  const page=PAGES[index];
+  navigating=true;
+  setNav();
+  try{
+    const res=await fetch('pages/'+page.id+'.html');
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const html=await res.text();
+    const container=el('content-container');
+    container.innerHTML=html;
+    current=index;
+    failedPageIndex=-1;
+    lastLoadError='';
+    container.scrollTop=0;
+    document.documentElement.scrollTop=0;
+    document.body.scrollTop=0;
+    initializeCaptions();
+    initializeCompletionGate();
+    visited.add(page.id);
+    save();
+    window.scrollTo(0,0);
+  }catch(error){
+    failedPageIndex=index;
+    lastLoadError='Could not load "'+page.title+'". Select Retry Page to try again.';
+    console.warn('SCORM page load failed:',page.id,error);
+    showAlert(lastLoadError);
+  }finally{
+    navigating=false;
+    setNav();
+  }
+}
+function nextPage(){
+  if(navigating)return;
+  if(failedPageIndex>=0){loadPage(failedPageIndex);return}
+  const messages=getGateState();
+  if(messages.length){showAlert(messages.join(' '));return}
+  if(current<PAGES.length-1)loadPage(current+1);
+  else{if(window.SCORM){SCORM.set('cmi.core.lesson_status','completed');SCORM.commit()}showAlert('Course complete')}
+}
+function prevPage(){if(!navigating&&current>0)loadPage(current-1)}
 function showAlert(message){const d=document.createElement('div');d.className='scorm-alert';d.textContent=message;document.body.appendChild(d);setTimeout(()=>d.remove(),3500)}
 function timeToSeconds(value){const clean=String(value||'').trim().replace(',','.');const parts=clean.split(':').map(Number);if(parts.length===3)return parts[0]*3600+parts[1]*60+parts[2];if(parts.length===2)return parts[0]*60+parts[1];return Number(clean)||0}
 function cleanCaptionText(value){const div=document.createElement('div');div.innerHTML=String(value||'').replace(/<[^>]+>/g,'');return(div.textContent||div.innerText||'').replace(/\\s+/g,' ').trim()}
@@ -691,7 +737,15 @@ function initializeCaptions(){document.querySelectorAll('.synced-caption[data-ca
 function toggleCaptions(btn){const box=el(btn.dataset.captionTarget);if(!box)return;const enabled=box.hidden;box.hidden=!enabled;btn.setAttribute('aria-pressed',String(enabled));btn.textContent=enabled?'CC On':'CC Off';if(enabled&&box._captionUpdate)box._captionUpdate()}
 function initializeCompletionGate(){const pageId=currentPageId();const kc=document.querySelector('.knowledge-check');if(kc&&completedKnowledgeChecks.has(pageId)){kc.dataset.completed='true';const btn=kc.querySelector('.check-button');if(btn)btn.textContent='Knowledge Check Complete'}document.querySelectorAll('.narration-audio').forEach(audio=>{if(completedAudioPages.has(pageId))audio.dataset.completed='true';const update=()=>{const duration=Number.isFinite(audio.duration)?audio.duration:0;if(audio.ended||(duration>0&&audio.currentTime>=Math.max(0,duration-.75))){audio.dataset.completed='true';if(!completedAudioPages.has(pageId)){completedAudioPages.add(pageId);save()}}updateNextGate()};audio.addEventListener('timeupdate',update);audio.addEventListener('ended',update);audio.addEventListener('loadedmetadata',update);update()});updateNextGate()}
 function getGateState(){const messages=[];const kc=document.querySelector('.knowledge-check');const audio=document.querySelector('.narration-audio');if(COURSE_SETTINGS.requireKnowledgeCheckBeforeContinue&&kc&&kc.dataset.completed!=='true')messages.push('Complete the knowledge check to continue.');if(COURSE_SETTINGS.requireAudioCompletionBeforeContinue&&audio&&audio.dataset.completed!=='true')messages.push('Listen to the full narration to continue.');return messages}
-function updateNextGate(){const next=el('next-button');if(!next)return;const messages=getGateState();next.disabled=messages.length>0;next.title=messages.join(' ');const gate=el('gate-message');if(gate)gate.textContent=messages.join(' ')}
+function updateNextGate(){
+  const next=el('next-button');
+  if(!next)return;
+  const messages=getGateState();
+  next.disabled=navigating||(failedPageIndex<0&&messages.length>0);
+  next.title=lastLoadError||messages.join(' ');
+  const gate=el('gate-message');
+  if(gate)gate.textContent=lastLoadError||messages.join(' ');
+}
 function submitKnowledgeCheck(btn){const box=btn.closest('.knowledge-check');const questions=Array.from(box.querySelectorAll('.question'));const passed=questions.map(q=>gradeQuestion(q)).every(Boolean);if(passed){completedKnowledgeChecks.add(currentPageId());box.dataset.completed='true';btn.textContent='Knowledge Check Complete';showAlert('Knowledge check complete.');save()}else{box.dataset.completed=String(completedKnowledgeChecks.has(currentPageId()))}updateNextGate()}
 function gradeQuestion(q){const selected=q.querySelector('input:checked');const fb=q.querySelector('.feedback');if(!selected){fb.textContent='Choose an answer first.';fb.className='feedback incorrect';return false}const ok=String(selected.value).trim()===String(q.dataset.correctOptionId).trim();fb.textContent=ok?q.dataset.correctFeedback:q.dataset.incorrectFeedback;fb.className='feedback '+(ok?'correct':'incorrect');return ok}
 function recordAssessmentInteraction(q,index){if(!window.SCORM)return;const selected=q.querySelector('input:checked');const ok=Boolean(selected&&String(selected.value).trim()===String(q.dataset.correctOptionId).trim());const base='cmi.interactions.'+index;SCORM.set(base+'.id',q.dataset.questionId||('assessment_q_'+(index+1)));SCORM.set(base+'.type',q.dataset.questionType==='true-false'?'true-false':'choice');SCORM.set(base+'.student_response',selected?selected.value:'');SCORM.set(base+'.correct_responses.0.pattern',q.dataset.correctOptionId||'');SCORM.set(base+'.result',ok?'correct':'wrong');SCORM.set(base+'.weighting','1')}
@@ -702,7 +756,17 @@ function openMediaLightbox(options){const lightbox=ensureMediaLightbox();const t
 function handleMediaExpandClick(event){const explicit=event.target.closest('[data-expand-src]');const inlineImage=!explicit&&event.target.closest('.topic-text img[src]');if(!explicit&&!inlineImage)return;if(event.target.closest('a'))return;event.preventDefault();const source=explicit||inlineImage;const tag=(source.tagName||'').toLowerCase();const kind=source.dataset.expandKind||(tag==='video'?'video':'image');const src=source.dataset.expandSrc||source.getAttribute('src');const title=source.dataset.expandTitle||source.getAttribute('alt')||source.getAttribute('title')||'Expanded media';openMediaLightbox({kind,src,title})}
 document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMediaLightbox()});
 document.addEventListener('click',handleMediaExpandClick);
-document.addEventListener('click',e=>{const nav=e.target.closest('.nav-item');if(nav){e.preventDefault();const target=Number(nav.dataset.index);const messages=getGateState();if(target>current&&messages.length){showAlert(messages.join(' '));return}loadPage(target)}});
+document.addEventListener('click',e=>{
+  const nav=e.target.closest('.nav-item');
+  if(!nav)return;
+  e.preventDefault();
+  if(navigating)return;
+  const target=Number(nav.dataset.index);
+  if(!Number.isInteger(target)||target<0||target>=PAGES.length)return;
+  const messages=getGateState();
+  if(target>current&&messages.length){showAlert(messages.join(' '));return}
+  loadPage(target);
+});
 function getInitialPageIndex(){const bookmark=window.SCORM?(SCORM.get('cmi.core.lesson_location')||''):'';const pageId=bookmark||storedState.currentPageId||'';const index=PAGES.findIndex(page=>page.id===pageId);return index>=0?index:0}
 document.addEventListener('DOMContentLoaded',()=>{el('prev-button').onclick=prevPage;el('next-button').onclick=nextPage;loadPage(getInitialPageIndex())});
 `;
