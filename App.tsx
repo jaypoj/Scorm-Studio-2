@@ -19,6 +19,7 @@ import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHand
 import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2, ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
+import { checkMediaFolderForProject, resolveSelectedMediaFolder } from './services/mediaFolderAccess';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from './utils/captions';
 import { PdfCourseEditor } from './features/pdfCourse/PdfCourseEditor';
 import { createPdfCourseProject, openPdfCourseProject } from './features/pdfCourse/pdfProjectZip';
@@ -60,6 +61,7 @@ const App: React.FC = () => {
   
   // Integrity Scan State
   const [isScanning, setIsScanning] = useState(false);
+  const [mediaWritePermission, setMediaWritePermission] = useState<'granted' | 'prompt' | 'denied' | 'unknown'>('unknown');
   const [scanResult, setScanResult] = useState<{ count: number, logs: string[] } | null>(null);
 
   // AI Settings State (persisted in localStorage in a real app, here state)
@@ -89,6 +91,24 @@ const App: React.FC = () => {
     setIsSiteUnlocked(false);
   };
 
+  // The File System Access API does not persist read/write grants across devices
+  // (and browsers can revoke them within a session). Query only; a user click is
+  // required to request permission again.
+  useEffect(() => {
+    let active = true;
+    setMediaWritePermission('unknown');
+    const handle = context?.assetsHandle as (FileSystemDirectoryHandle & {
+      queryPermission?: (options: { mode: 'readwrite' }) => Promise<'granted' | 'prompt' | 'denied'>;
+    }) | null;
+    if (!handle?.queryPermission || context?.isSandbox) return;
+    handle.queryPermission({ mode: 'readwrite' }).then(result => {
+      if (active) setMediaWritePermission(result);
+    }).catch(() => {
+      if (active) setMediaWritePermission('unknown');
+    });
+    return () => { active = false; };
+  }, [context?.assetsHandle, context?.isSandbox]);
+
   // INTEGRITY SCANNER EFFECT
   // Runs whenever context changes, specifically looking for a new project load
   useEffect(() => {
@@ -103,8 +123,10 @@ const App: React.FC = () => {
                 );
                 
                 if (repairedCount > 0) {
-                    // Update context with repaired project
-                    setContext(prev => prev ? { ...prev, projectData: project } : null);
+                    // Never overwrite edits (including media removal) made while the scan ran.
+                    setContext(prev => prev?.projectData === context.projectData && prev.assetsHandle === context.assetsHandle
+                      ? { ...prev, projectData: project }
+                      : prev);
                 }
                 
                 setScanResult({ count: repairedCount, logs });
@@ -117,7 +139,7 @@ const App: React.FC = () => {
         };
         runScan();
     }
-  }, [context?.projectData?.project?.id]); // Depend on ID to run once per loaded project
+  }, [context?.projectData?.project?.id, context?.assetsHandle]); // Scan again if a missing media folder is reconnected.
 
   useEffect(() => {
     if (!context?.projectHandle || context.isSandbox || isScanning) return;
@@ -416,14 +438,16 @@ const App: React.FC = () => {
 
   // Sandbox Opener (Input type=file)
   const handleSandboxSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files.length > 0) {
+      const files = e.currentTarget.files;
+      if (files && files.length > 0) {
           try {
-            const virtualRoot = createVirtualFileSystem(e.target.files);
+            const virtualRoot = createVirtualFileSystem(files);
             processRootHandle(virtualRoot, true).catch(err => setError(err.message));
           } catch(err: any) {
               setError("Failed to load sandbox: " + err.message);
           }
       }
+      e.currentTarget.value = '';
   };
 
   const handleCreateNewCourse = async (request: NewCourseRequest) => {
@@ -614,10 +638,41 @@ const App: React.FC = () => {
     }
   };
 
+  const handleLinkAssets = async () => {
+    if (!context) return;
+    if (context.isSandbox) {
+      alert('This course was opened in browser-session mode. Close the project and use Open Project Folder in a normal Chrome or Edge tab to grant direct access. Media saved in a browser session is not included in a downloaded .scormproj file.');
+      return;
+    }
+    if (window.self !== window.top || !('showDirectoryPicker' in window)) {
+      alert("This browser cannot grant direct folder access here. Open GitHub Pages in a normal Chrome or Edge tab (not an embedded preview), or check your organization's browser policies.");
+      return;
+    }
+
+    const currentProjectId = context.projectData.project.id;
+    try {
+      // Must be called directly from a button click; browsers require a user gesture.
+      // @ts-ignore File System Access API
+      const selected: FileSystemDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const folder = await resolveSelectedMediaFolder(selected);
+      const status = await checkMediaFolderForProject(folder, context.projectData);
+      if (status.expectedFileCount > 0 && status.matchedFileCount === 0) {
+        if (!window.confirm(`No existing linked media files were found in "${folder.name}".\n\nThis might not be the media folder for this course. Linking a different folder will not delete anything, but images and audio may still be unavailable.\n\nUse this folder anyway?`)) return;
+      } else if (!status.recognizedFolderName && status.fileCount === 0) {
+        if (!window.confirm(`"${folder.name}" is empty and does not look like a media folder.\n\nUse it as this course's media folder anyway?`)) return;
+      }
+
+      setContext(prev => prev?.projectData.project.id === currentProjectId ? { ...prev, assetsHandle: folder } : prev);
+      setScanResult(null);
+    } catch (linkError) {
+      if (linkError instanceof DOMException && linkError.name === 'AbortError') return;
+      alert(`Could not connect the media folder: ${linkError instanceof Error ? linkError.message : String(linkError)}\n\nIf your employer restricts folder permissions, check with IT. No course files were changed.`);
+    }
+  };
+
   const handleAssetCreate = async (file: File, id: string) => {
     if (!context?.assetsHandle) {
-      alert("No asset folder linked.");
-      return;
+      throw new Error('No media folder is linked. Use Connect Media Folder before uploading.');
     }
     try {
       const fileHandle = await context.assetsHandle.getFileHandle(file.name, { create: true });
@@ -1112,6 +1167,9 @@ const App: React.FC = () => {
             onChange={updateTopic}
             assetsHandle={context.assetsHandle}
             onAssetCreate={handleAssetCreate}
+            onLinkAssets={handleLinkAssets}
+            onOpenAiSettings={() => setIsSettingsOpen(true)}
+            isSandbox={context.isSandbox}
             aiSettings={aiSettings}
             label="Welcome Page"
             projectId={projectData.project.id}
@@ -1130,6 +1188,9 @@ const App: React.FC = () => {
                 onChange={updateTopic}
                 assetsHandle={context.assetsHandle}
                 onAssetCreate={handleAssetCreate}
+                onLinkAssets={handleLinkAssets}
+                onOpenAiSettings={() => setIsSettingsOpen(true)}
+                isSandbox={context.isSandbox}
                 aiSettings={aiSettings}
                 label="Learning Objectives"
                 projectId={projectData.project.id}
@@ -1256,7 +1317,7 @@ const App: React.FC = () => {
                                   >
                                      <GripVertical className="w-4 h-4" />
                                   </button>
-                                  <span className="min-w-0 font-medium text-slate-700 truncate" title={t.title}>{i + 1}. {t.title}</span>
+                                  <span className="min-w-0 font-medium text-slate-700 break-words whitespace-normal" title={t.title}>{i + 1}. {t.title}</span>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
                                   <button
@@ -1414,6 +1475,9 @@ const App: React.FC = () => {
               onChange={updateTopic} 
               assetsHandle={context.assetsHandle}
               onAssetCreate={handleAssetCreate}
+              onLinkAssets={handleLinkAssets}
+              onOpenAiSettings={() => setIsSettingsOpen(true)}
+              isSandbox={context.isSandbox}
               aiSettings={aiSettings}
               label="Topic Editor"
               projectId={projectData.project.id}
@@ -1667,10 +1731,23 @@ const App: React.FC = () => {
          {/* Browser-session indicator */}
          {context.isSandbox && (
              <div className="bg-amber-100 text-amber-800 text-xs font-bold text-center py-1 border-b border-amber-200">
-                 BROWSER SESSION: Changes stay in memory and the updated project file downloads on Save.
+                 BROWSER SESSION: Edits stay in memory. Downloading a .scormproj does NOT include newly uploaded media files. Reopen with direct folder access for reliable saving.
              </div>
          )}
          
+         {!context.assetsHandle && !context.isSandbox && (
+             <div role="status" className="bg-amber-100 text-amber-900 text-xs py-2 px-4 border-b border-amber-200 flex flex-wrap justify-center items-center gap-2">
+                 <span>No media folder is linked. Upload, narration generation, and audio captions may be unavailable.</span>
+                 <button type="button" onClick={handleLinkAssets} className="font-bold underline">Connect Media Folder</button>
+             </div>
+         )}
+         {context.assetsHandle && !context.isSandbox && (mediaWritePermission === 'prompt' || mediaWritePermission === 'denied') && (
+             <div role="status" className="bg-amber-100 text-amber-900 text-xs py-2 px-4 border-b border-amber-200 flex flex-wrap justify-center items-center gap-2">
+                 <span>{mediaWritePermission === 'denied' ? 'Media folder write access was denied.' : 'Media folder write access needs renewed permission.'}</span>
+                 <button type="button" onClick={handleLinkAssets} className="font-bold underline">Reconnect Media Folder</button>
+             </div>
+         )}
+
          {/* Integrity Scanner Status */}
          {isScanning && (
              <div className="bg-blue-600 text-white text-xs font-bold text-center py-2 animate-pulse flex items-center justify-center gap-2">
