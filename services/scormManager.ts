@@ -53,11 +53,14 @@ const dedupeMedia = (items: Array<MediaItem | null | undefined>): MediaItem[] =>
 const normalizePageMedia = (page: any, legacyProjectMedia: any[]): MediaItem[] => {
   const pageId = page?.id;
   const directMedia = Array.isArray(page?.media) ? page.media : [];
+  const detachedIds = new Set((page?.detachedMediaStorageIds || []).map((id: string) => String(id).toLowerCase()));
   const legacyLinkedMedia = legacyProjectMedia.filter(item => {
     const linkedPageId = item?.page_id || item?.pageId || item?.page;
     return pageId && linkedPageId === pageId;
   });
-  return dedupeMedia([...directMedia, ...legacyLinkedMedia].map(normalizeMediaItem));
+  return dedupeMedia([...directMedia, ...legacyLinkedMedia]
+    .map(normalizeMediaItem)
+    .filter(item => item && !detachedIds.has(item.storageId.toLowerCase())));
 };
 
 const emptyPage = (id: string, title: string) => ({
@@ -285,7 +288,8 @@ export class ScormManager {
           const storageId = meta.storageId || meta.id;
           const type = inferMediaType({ ...meta, storageId });
           const title = meta.title || meta.originalName || meta.original_name || storageId;
-          if (page && storageId && !(page.media || []).some(m => m.storageId === storageId)) {
+          const detachedIds = new Set((page?.detachedMediaStorageIds || []).map(id => id.toLowerCase()));
+          if (page && storageId && !detachedIds.has(String(storageId).toLowerCase()) && !(page.media || []).some(m => m.storageId === storageId)) {
             page.media = [...(page.media || []), {
               id: meta.id || storageId,
               storageId,

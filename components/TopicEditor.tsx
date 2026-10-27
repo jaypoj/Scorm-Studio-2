@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Topic, MediaItem, FileSystemDirectoryHandle, FileSystemHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, Question, PronunciationConfig, PronunciationEntry, TtsSettings, BatchJobType, BatchProgressItem } from '../types';
 import { Upload, Image as ImageIcon, Sparkles, Wand2, Mic, Search, BookOpen, ChevronRight, ExternalLink, Activity, X, Info, FileAudio, FileVideo, AlertCircle, Loader2, Link, CheckSquare, Plus, Trash2, CheckCircle2, XCircle, Bot, Maximize2, FileText, Play, Clock } from 'lucide-react';
 import { ScormManager } from '../services/scormManager';
@@ -16,6 +16,9 @@ interface TopicEditorProps {
   onChange: (updatedData: Topic | WelcomePage | LearningObjectivesPage) => void;
   assetsHandle: FileSystemDirectoryHandle | null;
   onAssetCreate: (file: File, id: string) => Promise<void>;
+  onLinkAssets: () => Promise<void>;
+  onOpenAiSettings: () => void;
+  isSandbox: boolean;
   aiSettings: AISettings;
   label?: string;
   projectId: string;
@@ -25,7 +28,9 @@ interface TopicEditorProps {
   batchProgress: BatchProgressItem[];
 }
 
-export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assetsHandle, onAssetCreate, aiSettings, label, projectId, pronunciationConfig, onPronunciationConfigChange, batchJob, batchProgress }) => {
+export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assetsHandle, onAssetCreate, onLinkAssets, onOpenAiSettings, isSandbox, aiSettings, label, projectId, pronunciationConfig, onPronunciationConfigChange, batchJob, batchProgress }) => {
+  const mediaFileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [generatingImg, setGeneratingImg] = useState<number | null>(null);
   const [generatingAudio, setGeneratingAudio] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -36,6 +41,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   const [showAiMoreOptions, setShowAiMoreOptions] = useState(false);
   const [lastAiFailure, setLastAiFailure] = useState<{ action: string; message: string } | null>(null);
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [previewsLoading, setPreviewsLoading] = useState(false);
   const [showResearch, setShowResearch] = useState(false);
   const [researchTermInput, setResearchTermInput] = useState('');
   const [researchResult, setResearchResult] = useState<{definition: string, expansion: string} | null>(null);
@@ -142,6 +148,8 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   // Effect to load media previews with Binary Decoding and Metadata
   useEffect(() => {
     let isMounted = true;
+    const ownedPreviewUrls: string[] = [];
+    setPreviewsLoading(true);
     
     const loadPreviewsAndDiscover = async () => {
       const logs: string[] = [];
@@ -222,7 +230,11 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       const combinedMedia = [...(data.media || []), ...potentiallyDiscovered];
 
       if (combinedMedia.length === 0) {
-          if (isMounted) setDiagnosticLogs(logs);
+          if (isMounted) {
+              setPreviews({});
+              setDiagnosticLogs(logs);
+              setPreviewsLoading(false);
+          }
           return;
       }
 
@@ -285,7 +297,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                     logs.push(`Skipped ${media.storageId}: decoded MIME ${mimeType} is not an image.`);
                     continue;
                 }
-                newPreviews[media.id] = URL.createObjectURL(blob);
+                const objectUrl = URL.createObjectURL(blob);
+                ownedPreviewUrls.push(objectUrl);
+                newPreviews[media.id] = objectUrl;
              }
         } catch (e: any) {
           console.warn("Could not load preview for", media.storageId, e);
@@ -295,19 +309,18 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       if (isMounted) {
           setPreviews(newPreviews);
           setDiagnosticLogs(logs);
-      } else {
-           Object.values(newPreviews).forEach((url: string) => {
-              if (url.startsWith('blob:')) URL.revokeObjectURL(url);
-           });
+          setPreviewsLoading(false);
       }
     };
 
-    loadPreviewsAndDiscover();
+    loadPreviewsAndDiscover().catch(error => {
+      console.warn('Could not scan linked media folder', error);
+      if (isMounted) setPreviewsLoading(false);
+    });
     return () => {
       isMounted = false;
-      Object.values(previews as Record<string, string>).forEach((url: string) => {
-          if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
-      });
+      // Revoke URLs created by this scan, not a stale render's preview state.
+      ownedPreviewUrls.forEach(url => URL.revokeObjectURL(url));
     };
   }, [data.media, data.detachedMediaStorageIds, assetsHandle, data.id]);
 
@@ -316,6 +329,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   const isNarrationAudio = (media: MediaItem) => getMediaType(media) === 'audio' && !media.candidate && media.source !== 'powerpoint';
   const visualMedia = allMedia.filter(m => !m.candidate && ['image', 'video'].includes(getMediaType(m)));
   const featuredAudio = allMedia.find(isNarrationAudio);
+  const azureSettingsMissing = !aiSettings.azureOpenAiEndpoint?.trim() || !aiSettings.azureOpenAiApiKey?.trim();
   const hasPowerPointNotes = 'notes' in data && typeof (data as Topic).notes === 'string';
 
   const extractGoogleImageQueries = () => {
@@ -486,17 +500,20 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   const attachFileAsMedia = async (file: File, title = file.name) => {
     if (!assetsHandle) {
-      alert("No asset folder linked.");
-      return;
+      throw new Error('No media folder linked. Use Connect Media Folder before uploading.');
     }
 
-    const type = file.type.startsWith('image') ? 'image' : file.type.startsWith('audio') ? 'audio' : 'video';
+    const detectedMimeType = file.type || BinaryDecoder.getMimeTypeFromExtension(file.name.split('.').pop() || '');
+    const type = detectedMimeType.startsWith('image/') ? 'image'
+      : detectedMimeType.startsWith('audio/') ? 'audio'
+      : detectedMimeType.startsWith('video/') ? 'video' : null;
+    if (!type) throw new Error('Unsupported file type. Choose an image, audio, or video file.');
     if (type === 'image' && !(await confirmImageQuality(file))) return;
 
     const storageId = ScormManager.generateStorageId(type);
     const ext = getSafeMediaExtension(file, type);
     const newFileName = `${storageId}.${ext}`;
-    const mimeType = file.type || BinaryDecoder.getMimeTypeFromExtension(ext) || (type === 'image' ? 'image/png' : 'application/octet-stream');
+    const mimeType = detectedMimeType;
     const newFile = new File([file], newFileName, { type: mimeType });
 
     await onAssetCreate(newFile, storageId);
@@ -522,9 +539,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
     }
 
     const newMedia: MediaItem = {
-      id: `media-${Date.now()}`,
+      id: `media-${storageId}`,
       storageId,
-      type: type as any,
+      type,
       title,
       url: ""
     };
@@ -533,7 +550,10 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
   const showMediaAttachError = (error: unknown) => {
     console.error('Failed to attach media', error);
-    alert(`Could not attach media:\n\n${getErrorMessage(error)}\n\nReopen the project folder, then try the upload again. If the file appears in the media folder but not in the app, run Media Diagnostics.`);
+    const accessHint = error instanceof DOMException && ['NotAllowedError', 'SecurityError'].includes(error.name)
+      ? 'Chrome may have revoked folder write access. Use Reconnect Media Folder, then try again.'
+      : 'Check the media folder connection, then try again. If the file exists on disk, run Media Diagnostics.';
+    alert(`Could not attach media:\n\n${getErrorMessage(error)}\n\n${accessHint}`);
   };
 
   const attachExternalImage = (url: string, title = 'External image') => {
@@ -551,14 +571,17 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const file = e.currentTarget.files?.[0];
+    // Clear before awaiting so selecting the same file again always fires onChange.
+    e.currentTarget.value = '';
+    if (!file || isUploadingMedia) return;
+    setIsUploadingMedia(true);
     try {
-      if (!file) return;
       await attachFileAsMedia(file);
     } catch (error) {
       showMediaAttachError(error);
     } finally {
-      e.target.value = '';
+      setIsUploadingMedia(false);
     }
   };
 
@@ -983,7 +1006,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       setExpandedImage(null);
   };
 
-  const handleDeleteMedia = async (mediaId: string, storageId: string) => {
+  const handleDeleteMedia = (mediaId: string, storageId: string) => {
       const isConfirmed = window.confirm("Remove this media from the current page?\n\nThe file will remain in the media folder so existing projects cannot lose saved assets.");
       if (!isConfirmed) return;
 
@@ -1104,9 +1127,12 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                               <video controls src={preview} className="w-full aspect-video bg-black" />
                             )
                           ) : (
-                            <div className="flex flex-col items-center text-slate-400 gap-2">
-                              <Loader2 className="w-8 h-8 animate-spin" />
-                              <span>Loading Preview...</span>
+                            <div role="status" className="flex flex-col items-center text-slate-500 gap-2 p-4 text-center text-xs">
+                              {previewsLoading ? (
+                                <><Loader2 className="w-6 h-6 animate-spin" /><span>Loading preview...</span></>
+                              ) : (
+                                <><AlertCircle className="w-6 h-6" /><span>{!assetsHandle ? 'Media folder not connected. Reconnect to display this file.' : 'Preview unavailable. Check the linked media folder and Media Diagnostics.'}</span></>
+                              )}
                             </div>
                           )}
                           {discoveredMedia.some(d => d.id === media.id) && (
@@ -1178,7 +1204,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                             onClick={handleGenerateNarrationAudio}
                             disabled={generatingAudio || !assetsHandle || !data.narration?.trim()}
                             className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
-                            title="Generate narration audio with Azure OpenAI TTS using the runtime key in AI Settings."
+                            title={!assetsHandle ? 'Connect Media Folder to enable TTS.' : !data.narration?.trim() ? 'Enter a narration script first.' : 'Generate narration audio with Azure OpenAI TTS using the settings in this browser.'}
                         >
                             {generatingAudio ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
                             Generate TTS
@@ -1186,6 +1212,22 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                     </span>
                 </h3>
                 
+                {!assetsHandle && (
+                    <p role="status" className="mt-2 text-xs text-amber-700">
+                        Generate TTS is disabled because the course's media folder is not connected.{' '}
+                        <button type="button" onClick={onLinkAssets} className="font-semibold underline">{isSandbox ? 'Reopen with folder access' : 'Connect Media Folder'}</button>
+                    </p>
+                )}
+                {assetsHandle && !data.narration?.trim() && (
+                    <p className="mt-2 text-xs text-slate-600">Add a narration script to enable Generate TTS.</p>
+                )}
+                {assetsHandle && data.narration?.trim() && azureSettingsMissing && (
+                    <p role="status" className="mt-2 text-xs text-amber-700">
+                        Azure TTS endpoint or key is not set in this browser. Settings from your previous laptop do not transfer automatically.{' '}
+                        <button type="button" onClick={onOpenAiSettings} className="font-semibold underline">Open AI Settings</button>
+                    </p>
+                )}
+
                 {/* Inline Audio Player for Narration */}
                 {featuredAudio && previews[featuredAudio.id] && (
                     <div className="mb-4 bg-slate-50 p-2 rounded border border-slate-100">
@@ -1605,11 +1647,24 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                     </div>
                     
                     <div className="flex gap-2">
-                        <label className={`flex-1 flex items-center justify-center px-4 py-3 border-2 border-dashed rounded-md transition-colors group ${assetsHandle ? 'bg-white border-slate-300 cursor-pointer hover:border-blue-400 hover:bg-blue-50' : 'bg-slate-100 border-slate-200 cursor-not-allowed'}`}>
-                        <Upload className="w-5 h-5 text-slate-400 group-hover:text-blue-500 mr-2" />
-                        <span className="text-sm font-medium text-slate-600 group-hover:text-blue-600">Upload</span>
-                        <input type="file" className="hidden" onChange={handleFileUpload} disabled={!assetsHandle} accept="image/*,audio/*,video/*" />
-                        </label>
+                        <button
+                            type="button"
+                            onClick={() => assetsHandle ? mediaFileInputRef.current?.click() : onLinkAssets()}
+                            disabled={isUploadingMedia}
+                            className="flex-1 flex items-center justify-center px-4 py-3 border-2 border-dashed rounded-md transition-colors group bg-white border-slate-300 hover:border-blue-400 hover:bg-blue-50 disabled:bg-slate-100 disabled:border-slate-200 disabled:cursor-not-allowed"
+                        >
+                            {isUploadingMedia ? <Loader2 className="w-5 h-5 text-blue-500 animate-spin mr-2" /> : <Upload className="w-5 h-5 text-slate-400 group-hover:text-blue-500 mr-2" />}
+                            <span className="text-sm font-medium text-slate-600 group-hover:text-blue-600">
+                                {isUploadingMedia ? 'Uploading...' : assetsHandle ? 'Upload' : 'Connect Folder to Upload'}
+                            </span>
+                        </button>
+                        <input
+                            ref={mediaFileInputRef}
+                            type="file"
+                            className="hidden"
+                            onChange={handleFileUpload}
+                            accept="image/*,audio/*,video/*,.jpg,.jpeg,.png,.gif,.webp,.svg,.bmp,.avif,.tif,.tiff,.mp3,.wav,.m4a,.aac,.ogg,.mp4,.webm,.mov,.m4v,.avi,.mkv"
+                        />
                         
                         <button 
                             onClick={() => setShowDiagnostics(true)}
@@ -1631,12 +1686,31 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
 
                  {/* Media Manager */}
                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-                    <h3 className="text-sm font-semibold text-slate-800 mb-3 flex items-center justify-between">
-                    <span>Media Assets</span>
-                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${assetsHandle ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-                        {assetsHandle ? `Linked: ${assetsHandle.name}` : 'No Access'}
-                    </span>
-                    </h3>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <h3 className="text-sm font-semibold text-slate-800">Media Assets</h3>
+                        <div className="flex items-center flex-wrap gap-2">
+                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${assetsHandle ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {assetsHandle ? `Linked: ${assetsHandle.name}` : 'No Access'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={onLinkAssets}
+                                className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
+                            >
+                                {assetsHandle ? 'Reconnect Media Folder' : 'Connect Media Folder'}
+                            </button>
+                        </div>
+                    </div>
+                    {!assetsHandle && (
+                        <p role="status" className="text-xs text-amber-800 bg-amber-50 rounded p-2 mb-3">
+                            Upload is unavailable because no media folder was found. Reconnect this course's existing media folder first. Chrome and Edge do not transfer folder permissions from your previous computer.
+                        </p>
+                    )}
+                    {isSandbox && (
+                        <p role="status" className="text-xs text-amber-800 bg-amber-50 rounded p-2 mb-3">
+                            Browser-session mode: newly uploaded media will not be included in the downloaded .scormproj file. Reopen this course with direct folder access before adding media that needs to be saved.
+                        </p>
+                    )}
                     
                     <div className="space-y-3 mb-4 max-h-[400px] overflow-y-auto">
                     {allMedia?.map(m => {
@@ -1691,7 +1765,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                     <button 
                                         onClick={() => handleDeleteMedia(m.id, m.storageId)}
                                         className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors ml-auto top-3 right-3 shrink-0"
-                                        title="Delete Media"
+                                        title="Remove from page (keep original file on disk)"
                                     >
                                         <Trash2 className="w-4 h-4" />
                                     </button>
@@ -1752,12 +1826,17 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                                 </>
                             )}
                         </button>
-                        {!featuredAudio && (
-                             <p className="text-[10px] text-amber-600 mt-2 text-center">
-                                 <AlertCircle className="w-3 h-3 inline mr-1" />
-                                 Attach audio file above to enable generation.
+                        {!assetsHandle ? (
+                             <p role="status" className="text-xs text-amber-700 mt-2 text-center">
+                                 Captions are disabled because the media folder is not connected.{' '}
+                                 <button type="button" onClick={onLinkAssets} className="font-semibold underline">Connect Media Folder</button>
                              </p>
-                        )}
+                        ) : !featuredAudio ? (
+                             <p className="text-xs text-amber-700 mt-2 text-center">
+                                 <AlertCircle className="w-3 h-3 inline mr-1" />
+                                 No linked narration audio on this page. Upload or generate audio to enable captions.
+                             </p>
+                        ) : null}
                     </div>
 
                     <textarea
