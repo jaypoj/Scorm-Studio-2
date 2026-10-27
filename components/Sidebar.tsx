@@ -99,7 +99,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ project, currentView, onNaviga
               <button
                 key={topic.id}
                 onClick={() => onNavigate({ type: 'topic-edit', id: topic.id })}
-                className={`w-full text-left px-3 py-1.5 rounded-r-md text-xs truncate transition-colors ${
+                title={topic.title}
+                className={`w-full text-left px-3 py-1.5 rounded-r-md text-xs whitespace-normal break-words leading-relaxed transition-colors ${
                   isTopicActive(topic.id) ? 'bg-slate-800 text-blue-400 border-l-2 border-blue-400 -ml-0.5' : 'hover:text-white text-slate-400'
                 }`}
               >
