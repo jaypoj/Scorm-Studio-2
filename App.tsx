@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TopicEditor } from './components/TopicEditor';
+import { CoursePreviewModal } from './components/CoursePreviewModal';
 import { AssessmentEditor } from './components/AssessmentEditor';
 import { AIGeneratorModal } from './components/AIGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
@@ -16,7 +17,7 @@ import { importLegacyScormFromFolder, importLegacyScormFromZip } from './service
 import { BinaryDecoder } from './services/binaryDecoder';
 import { formatGeminiQuotaGuidance, parseGeminiQuotaError, recordGeminiQuotaEvent } from './services/geminiQuota';
 import { ScormProject, ViewState, Topic, ProjectContext, FileSystemDirectoryHandle, FileSystemFileHandle, AISettings, WelcomePage, LearningObjectivesPage, DiscoveredProject, PronunciationConfig, MediaItem, BatchJobType, BatchProgressItem, BatchPageStatus, ImportedProjectMediaFile } from './types';
-import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2, ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
+import { Loader2, PlusCircle, AlertTriangle, FolderOpen, Download, ShieldCheck, ChevronRight, FilePlus2, FileArchive, History, Trash2, ArrowUp, ArrowDown, GripVertical, Settings, Eye } from 'lucide-react';
 import { DEFAULT_GEMINI_MODEL, DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES } from './constants';
 import { createVirtualFileSystem } from './utils/virtualFileSystem';
 import { checkMediaFolderForProject, resolveSelectedMediaFolder } from './services/mediaFolderAccess';
@@ -32,6 +33,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<ViewState>('welcome');
   const [isAIMode, setIsAIMode] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isNewCourseOpen, setIsNewCourseOpen] = useState(false);
   const [isCreatingCourse, setIsCreatingCourse] = useState(false);
   const [newCourseError, setNewCourseError] = useState<string | null>(null);
@@ -64,15 +66,25 @@ const App: React.FC = () => {
   const [mediaWritePermission, setMediaWritePermission] = useState<'granted' | 'prompt' | 'denied' | 'unknown'>('unknown');
   const [scanResult, setScanResult] = useState<{ count: number, logs: string[] } | null>(null);
 
-  // AI Settings State (persisted in localStorage in a real app, here state)
+  // API settings are shared across courses in the same browser profile.
+  // Restricted work browsers may block storage; an invalid/blocked entry must
+  // not prevent the course builder from opening.
   const [aiSettings, setAiSettings] = useState<AISettings>(() => {
-    const saved = localStorage.getItem('scorm_ai_settings');
-    // Using default model constant
-    const parsed = saved ? JSON.parse(saved) : { model: DEFAULT_GEMINI_MODEL };
+    let parsed: Partial<AISettings> = { model: DEFAULT_GEMINI_MODEL };
+    try {
+      const saved = localStorage.getItem('scorm_ai_settings');
+      if (saved) {
+        const restored = JSON.parse(saved);
+        if (restored && typeof restored === 'object' && !Array.isArray(restored)) parsed = restored;
+      }
+    } catch {
+      console.warn('Could not restore browser AI settings; check site storage permissions.');
+    }
     return {
       allowBundledGeminiFallback: false,
       regenerateExistingAudio: false,
       ...parsed,
+      model: typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model : DEFAULT_GEMINI_MODEL,
     };
   });
 
@@ -82,8 +94,18 @@ const App: React.FC = () => {
       regenerateExistingAudio: false,
       ...s,
     };
+    // Verify persistence before updating the UI or closing the settings dialog.
+    // Never show a successful save when this browser rejected local storage.
+    try {
+      const serialized = JSON.stringify(normalized);
+      localStorage.setItem('scorm_ai_settings', serialized);
+      if (localStorage.getItem('scorm_ai_settings') !== serialized) {
+        throw new Error('Saved settings could not be read back.');
+      }
+    } catch {
+      throw new Error('This browser could not save AI Settings. Check whether site data is blocked or private browsing is enabled, then try again.');
+    }
     setAiSettings(normalized);
-    localStorage.setItem('scorm_ai_settings', JSON.stringify(normalized));
   };
 
   const lockSite = () => {
@@ -456,11 +478,12 @@ const App: React.FC = () => {
     setNewCourseStatus('Preparing course workspace...');
     setNewCourseProgress(request.mode === 'powerpoint' || request.mode === 'legacy-scorm' ? 2 : null);
     try {
-      let rootHandle = context && !context.isSandbox ? context.rootHandle : null;
-      rootHandle = rootHandle || (rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle : null);
-      if (!rootHandle && request.mode === 'powerpoint') {
-        throw new Error('PowerPoint import needs an open project folder first. Click Open Project Folder, select a project folder, then create the PowerPoint course again.');
-      }
+      // Reuse the selected workspace, not the opened course's own folder.
+      // If someone opened a single course folder directly, prompt for a parent
+      // instead of silently nesting new courses inside the active course.
+      let rootHandle = rootEnvironment && !rootEnvironment.isSandbox
+        && (!context || rootEnvironment.rootHandle !== context.rootHandle)
+        ? rootEnvironment.rootHandle : null;
       if (!rootHandle) {
         if (!('showDirectoryPicker' in window) || window.self !== window.top) {
           throw new Error('Creating a new course requires direct folder access in Chrome or Edge. Open the app in a normal browser tab and try again.');
@@ -470,13 +493,13 @@ const App: React.FC = () => {
         rootHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
       }
       const courseFolderName = sanitizeFileName(request.courseName);
-      setNewCourseStatus('Creating course folders...');
-      const courseFolderHandle = await rootHandle.getDirectoryHandle(courseFolderName, { create: true });
-      const assetsHandle = await courseFolderHandle.getDirectoryHandle('media', { create: true });
-      await courseFolderHandle.getDirectoryHandle('_restore_points', { create: true });
-      const initialPronunciationConfig = { tts: DEFAULT_TTS_SETTINGS, pronunciations: [] };
-      const pronunciationHandle = await courseFolderHandle.getFileHandle('pronunciations.json', { create: true });
-      await writeTextFile(pronunciationHandle, JSON.stringify(initialPronunciationConfig, null, 2));
+      // Never overwrite an existing course folder, even if names only differ in case on Windows.
+      // @ts-ignore File System Access API async iterator
+      for await (const entry of rootHandle.values()) {
+        if (entry.kind === 'directory' && entry.name.toLowerCase() === courseFolderName.toLowerCase()) {
+          throw new Error(`A folder named "${entry.name}" already exists here. Choose a different course name or open that existing course instead. No files were changed.`);
+        }
+      }
 
       const generationSettings = { ...aiSettings, model: request.model };
       setNewCourseStatus(
@@ -511,6 +534,14 @@ const App: React.FC = () => {
         : importedPowerPoint?.courseContent || importedLegacyScorm?.courseContent;
       const projectTopics = importedPowerPoint?.topics || importedLegacyScorm?.topics || request.topics;
       const project = ScormManager.createProject(request.courseName, projectTopics, request.difficulty, generatedContent);
+      // Do not create empty course folders when generation/import fails.
+      setNewCourseStatus('Creating course folders...');
+      const courseFolderHandle = await rootHandle.getDirectoryHandle(courseFolderName, { create: true });
+      const assetsHandle = await courseFolderHandle.getDirectoryHandle('media', { create: true });
+      await courseFolderHandle.getDirectoryHandle('_restore_points', { create: true });
+      const initialPronunciationConfig = { tts: DEFAULT_TTS_SETTINGS, pronunciations: [] };
+      const pronunciationHandle = await courseFolderHandle.getFileHandle('pronunciations.json', { create: true });
+      await writeTextFile(pronunciationHandle, JSON.stringify(initialPronunciationConfig, null, 2));
       if (importedPowerPoint) {
         project.scormConfig.contentMode = 'ppt-import';
       }
@@ -1493,6 +1524,12 @@ const App: React.FC = () => {
     return <div>View Not Found</div>;
   };
 
+  // Apply the existing password gate before displaying the entry screens.
+  // AI Settings can now be opened there, so saved keys must stay behind the gate.
+  if (!isSiteUnlocked) {
+    return <PasswordGate onUnlock={() => setIsSiteUnlocked(true)} />;
+  }
+
   // Login / Load Screen
   if (!context && !pdfCourseProject && view !== 'project-select') {
     return (
@@ -1502,6 +1539,9 @@ const App: React.FC = () => {
                 <FolderOpen className="w-8 h-8" />
             </div>
             <h1 className="text-3xl font-bold text-slate-800">SCORM Architect Pro</h1>
+            <button type="button" onClick={() => setIsSettingsOpen(true)} className="inline-flex items-center justify-center gap-2 text-xs font-semibold border border-slate-300 rounded-lg px-3 py-2 text-blue-700 hover:bg-blue-50">
+              <Settings className="w-4 h-4" /> AI Settings (Gemini & Azure TTS)
+            </button>
             <p className="text-slate-500 text-sm">
                 Choose the standard course builder or the separate PDF compliance/SOP builder.
             </p>
@@ -1588,8 +1628,11 @@ const App: React.FC = () => {
                 </div>
             )}
             
-            <p className="text-xs text-slate-400 mt-4">
-              Direct folder access is used when the browser allows it. Otherwise, the app opens the folder in browser-session mode and downloads the updated project file when you save.
+            <p className="text-xs text-slate-500 mt-4 text-left leading-relaxed">
+              <strong>Open existing course:</strong> Select its folder containing a .scormproj file and the media subfolder (images/audio may be .bin files). The app discovers course projects; there is no need to upload the project again. New courses automatically create their own folder and media files.
+            </p>
+            <p className="text-xs text-slate-400 mt-2">
+              Direct folder access is used when supported. Browser-session opening does not save uploaded media back to the folder.
             </p>
          </div>
           <NewCourseModal
@@ -1599,16 +1642,15 @@ const App: React.FC = () => {
              status={newCourseStatus}
              progress={newCourseProgress}
              aiSettings={aiSettings}
-             allowPowerPointImport={Boolean(rootEnvironment && !rootEnvironment.isSandbox)}
+             allowPowerPointImport
+             destinationFolderName={rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle.name : null}
+             onOpenAiSettings={() => setIsSettingsOpen(true)}
              onClose={() => setIsNewCourseOpen(false)}
              onCreate={handleCreateNewCourse}
           />
+          <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={aiSettings} onSave={saveAiSettings} />
       </div>
     );
-  }
-
-  if (!isSiteUnlocked) {
-    return <PasswordGate onUnlock={() => setIsSiteUnlocked(true)} />;
   }
 
   if (pdfCourseProject) {
@@ -1632,6 +1674,9 @@ const App: React.FC = () => {
                         {error && <p className="text-sm text-slate-400 mt-2">{error}</p>}
                     </div>
                     <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => setIsSettingsOpen(true)} className="inline-flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-lg border border-slate-300 text-blue-700 hover:bg-blue-50">
+                      <Settings className="w-4 h-4" /> AI Settings
+                    </button>
                     <button
                         onClick={() => {
                             setNewCourseError(null);
@@ -1694,10 +1739,13 @@ const App: React.FC = () => {
                     status={newCourseStatus}
                     progress={newCourseProgress}
                     aiSettings={aiSettings}
-                    allowPowerPointImport={Boolean(rootEnvironment && !rootEnvironment.isSandbox)}
+                    allowPowerPointImport
+                    destinationFolderName={rootEnvironment && !rootEnvironment.isSandbox ? rootEnvironment.rootHandle.name : null}
+                    onOpenAiSettings={() => setIsSettingsOpen(true)}
                     onClose={() => setIsNewCourseOpen(false)}
                     onCreate={handleCreateNewCourse}
                 />
+                <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} settings={aiSettings} onSave={saveAiSettings} />
             </div>
         </div>
      );
@@ -1776,8 +1824,17 @@ const App: React.FC = () => {
          </div>
       </main>
 
-      {/* Floating Export Button if authenticated */}
-      <div className="fixed bottom-6 right-6">
+      {/* Keep Preview next to Export so authors can test before publishing. */}
+      <div className="fixed bottom-6 right-6 flex flex-wrap justify-end gap-3 z-30">
+         <button
+           type="button"
+           onClick={() => setIsPreviewOpen(true)}
+           disabled={isExporting || isScanning}
+           className="bg-violet-700 hover:bg-violet-600 text-white px-5 py-3 rounded-full shadow-xl flex items-center gap-2 font-semibold transition-colors disabled:opacity-50"
+           title="Preview learner pages, navigation, audio and captions without recording LMS progress"
+         >
+           <Eye className="w-5 h-5" /> Preview Course
+         </button>
          <button
            onClick={handleExportScorm}
            disabled={isExporting || isScanning}
@@ -1787,6 +1844,15 @@ const App: React.FC = () => {
            Export SCORM Package
          </button>
       </div>
+
+      {isPreviewOpen && (
+        <CoursePreviewModal
+          project={context.projectData}
+          assetsHandle={context.assetsHandle}
+          rootHandle={context.rootHandle}
+          onClose={() => setIsPreviewOpen(false)}
+        />
+      )}
 
       {isAIMode && (
         <AIGeneratorModal 
@@ -1809,7 +1875,9 @@ const App: React.FC = () => {
         status={newCourseStatus}
         progress={newCourseProgress}
         aiSettings={aiSettings}
-        allowPowerPointImport={Boolean(context && !context.isSandbox)}
+        allowPowerPointImport
+        destinationFolderName={rootEnvironment && !rootEnvironment.isSandbox && (!context || rootEnvironment.rootHandle !== context.rootHandle) ? rootEnvironment.rootHandle.name : null}
+        onOpenAiSettings={() => setIsSettingsOpen(true)}
         onClose={() => setIsNewCourseOpen(false)}
         onCreate={handleCreateNewCourse}
       />
