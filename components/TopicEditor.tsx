@@ -1068,6 +1068,9 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       )}
 
       <div className="flex-1 space-y-6">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2 space-y-6">
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Course Page Builder</p>
         {/* Header */}
         <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
             <div className="flex justify-between items-start mb-2">
@@ -1145,8 +1148,6 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
             </div>
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="xl:col-span-2 space-y-6">
             <div className="relative">
                 <div className="flex justify-end items-center mb-2">
                     <button 
@@ -1200,15 +1201,6 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                     <span>Narration Script</span>
                     <span className="flex items-center gap-2">
                         {featuredAudio && <span className="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded-full flex items-center gap-1"><Mic className="w-3 h-3"/> Audio Linked</span>}
-                        <button
-                            onClick={handleGenerateNarrationAudio}
-                            disabled={generatingAudio || !assetsHandle || !data.narration?.trim()}
-                            className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
-                            title={!assetsHandle ? 'Connect Media Folder to enable TTS.' : !data.narration?.trim() ? 'Enter a narration script first.' : 'Generate narration audio with Azure OpenAI TTS using the settings in this browser.'}
-                        >
-                            {generatingAudio ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mic className="w-3 h-3" />}
-                            Generate TTS
-                        </button>
                     </span>
                 </h3>
                 
@@ -1533,72 +1525,138 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
             )}
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-4 xl:sticky xl:top-4 xl:self-start xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto xl:pr-1">
+                <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm space-y-2">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2"><Mic className="w-4 h-4 text-blue-600" /> Audio &amp; Captions</h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      type="button" onClick={handleGenerateNarrationAudio}
+                      disabled={generatingAudio || !assetsHandle || !data.narration?.trim()}
+                      className="w-full inline-flex items-center justify-center gap-2 text-xs font-semibold px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={!assetsHandle ? 'Connect your media folder first.' : !data.narration?.trim() ? 'Enter the narration script in the center column first.' : 'Generate Azure OpenAI narration audio'}
+                    >{generatingAudio ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />} {generatingAudio ? 'Generating TTS...' : 'Generate TTS Audio'}</button>
+                    <button
+                      type="button" onClick={handleTranscribe}
+                      disabled={transcribing || !assetsHandle || !featuredAudio}
+                      className="w-full inline-flex items-center justify-center gap-2 text-xs font-semibold px-3 py-2 rounded bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      title={!assetsHandle ? 'Connect your media folder first.' : !featuredAudio ? 'Generate or attach narration audio first.' : 'Generate WebVTT captions for this page'}
+                    >{transcribing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} {transcribing ? 'Generating Captions...' : 'Generate Captions (VTT)'}</button>
+                  </div>
+                  {!assetsHandle ? (
+                    <p className="text-xs text-amber-800">Connect the course media folder to enable these tools. <button type="button" onClick={onLinkAssets} className="underline font-semibold">Connect Folder</button></p>
+                  ) : azureSettingsMissing ? (
+                    <p className="text-xs text-amber-800">Azure TTS needs this browser's endpoint and key. <button type="button" onClick={onOpenAiSettings} className="underline font-semibold">AI Settings</button></p>
+                  ) : !featuredAudio ? (
+                    <p className="text-[11px] text-slate-600">Captions become available after narration audio is linked.</p>
+                  ) : null}
+                </div>
+                 {/* Media Manager */}
+                <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <h3 className="text-sm font-semibold text-slate-800">Media Assets</h3>
+                        <div className="flex items-center flex-wrap gap-2">
+                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${assetsHandle ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                                {assetsHandle ? `Linked: ${assetsHandle.name}` : 'No Access'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={onLinkAssets}
+                                className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
+                            >
+                                {assetsHandle ? 'Reconnect Media Folder' : 'Connect Media Folder'}
+                            </button>
+                        </div>
+                    </div>
+                    {!assetsHandle && (
+                        <p role="status" className="text-xs text-amber-800 bg-amber-50 rounded p-2 mb-3">
+                            Upload is unavailable because no media folder was found. Reconnect this course's existing media folder first. Chrome and Edge do not transfer folder permissions from your previous computer.
+                        </p>
+                    )}
+                    {isSandbox && (
+                        <p role="status" className="text-xs text-amber-800 bg-amber-50 rounded p-2 mb-3">
+                            Browser-session mode: newly uploaded media will not be included in the downloaded .scormproj file. Reopen this course with direct folder access before adding media that needs to be saved.
+                        </p>
+                    )}
+                    
+                    <div className="space-y-3 mb-4 max-h-[220px] overflow-y-auto">
+                    {allMedia?.map(m => {
+                        const type = getMediaType(m);
+                        const isImage = type === 'image';
+                        const isAudio = type === 'audio';
+                        const isVideo = type === 'video';
+                        const isDiscovered = discoveredMedia.some(dm => dm.id === m.id);
+                        const isCandidate = Boolean(m.candidate);
+
+                        return (
+                            <div key={m.id} className={`flex flex-col gap-2 p-3 rounded border hover:border-blue-200 transition-colors relative ${isDiscovered ? 'bg-amber-50 border-amber-200' : isCandidate ? 'bg-violet-50 border-violet-200' : 'bg-slate-50 border-slate-100'}`}>
+                                <div className="flex items-start gap-3">
+                                    <div className="w-20 h-20 bg-slate-200 rounded flex items-center justify-center shrink-0 overflow-hidden border border-slate-300 relative group">
+                                    {isImage && previews[m.id] ? (
+                                        <img 
+                                            src={previews[m.id]} 
+                                            alt="preview" 
+                                            onClick={() => setExpandedImage(m.id)}
+                                            className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity" 
+                                            title="Click to expand"
+                                        />
+                                    ) : isAudio ? (
+                                        <FileAudio className="w-8 h-8 text-slate-500" />
+                                    ) : isVideo ? (
+                                        <FileVideo className="w-8 h-8 text-slate-500" />
+                                    ) : (
+                                        <Clock className="w-8 h-8 text-slate-500" />
+                                    )}
+                                    </div>
+                                    <div className="overflow-hidden flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-sm font-medium text-slate-700 truncate" title={m.title}>{m.title || m.storageId}</p>
+                                            {isDiscovered && <span className="text-[9px] bg-amber-200 text-amber-800 px-1 rounded">New</span>}
+                                            {isCandidate && <span className="text-[9px] bg-violet-200 text-violet-800 px-1 rounded">PPT Candidate</span>}
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 truncate mb-1">ID: {m.storageId}</p>
+                                        {isCandidate && (
+                                          <button
+                                            type="button"
+                                            onClick={() => onChange({
+                                              ...data,
+                                              media: (data.media || []).map(item => item.id === m.id ? { ...item, candidate: false } : item)
+                                            })}
+                                            className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700"
+                                          >
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            Add to Page
+                                          </button>
+                                        )}
+                                    </div>
+                                    <button 
+                                        onClick={() => handleDeleteMedia(m.id, m.storageId)}
+                                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors ml-auto top-3 right-3 shrink-0"
+                                        title="Remove from page (keep original file on disk)"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                </div>
+                                {isAudio && (
+                                    <audio controls src={previews[m.id]} className="w-full h-8 mt-1" />
+                                )}
+                            </div>
+                        );
+                    })}
+                    {(!allMedia || allMedia.length === 0) && (
+                        <div className="text-center py-8 text-slate-400 text-xs italic bg-slate-50 rounded border border-dashed border-slate-200">
+                            No media assets attached.<br/>
+                            Upload or Generate above.
+                        </div>
+                    )}
+                    </div>
+
+                </div>
                  {/* Media Creation */}
                 <div className="bg-white p-6 rounded-lg shadow-sm border border-blue-100">
                     <h3 className="text-sm font-bold mb-4 flex items-center gap-2 text-slate-900">
                         <Sparkles className="w-4 h-4 text-blue-600" />
                         Create or Find Visuals
                     </h3>
-                    <div className="space-y-3">
-                        {imagePromptSuggestions.length > 0 && (
-                            <>
-                                <div className="space-y-2">
-                                    {imagePromptSuggestions.map((prompt, i) => (
-                                        <label key={i} className="flex items-start gap-2 bg-blue-50/70 p-3 rounded border border-blue-100 cursor-pointer hover:border-blue-300">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedImagePromptIndexes.includes(i)}
-                                                onChange={() => toggleImagePromptSelection(i)}
-                                                className="mt-0.5 accent-blue-600"
-                                            />
-                                            <span className="text-xs text-slate-700 italic leading-relaxed">"{prompt}"</span>
-                                        </label>
-                                    ))}
-                                    <label className="flex items-start gap-2 bg-white p-3 rounded border border-blue-100 cursor-pointer hover:border-blue-300">
-                                        <input
-                                            type="checkbox"
-                                            checked={isCustomImagePromptSelected}
-                                            onChange={() => setIsCustomImagePromptSelected(prev => !prev)}
-                                            className="mt-0.5 accent-blue-600"
-                                        />
-                                        <textarea
-                                            value={customImagePrompt}
-                                            onChange={(e) => {
-                                                setCustomImagePrompt(e.target.value);
-                                                if (e.target.value.trim()) setIsCustomImagePromptSelected(true);
-                                            }}
-                                            rows={3}
-                                            className="min-w-0 flex-1 p-2 text-xs border border-slate-200 rounded bg-white text-slate-800 focus:outline-none focus:border-blue-400"
-                                            placeholder="Type or paste a custom image prompt..."
-                                        />
-                                    </label>
-                                </div>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <button 
-                                        onClick={handleChatGptImageGeneration}
-                                        className="w-full py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded flex items-center justify-center gap-2"
-                                    >
-                                        <ExternalLink className="w-3 h-3" />
-                                        Generate with ChatGPT 2.0 Image
-                                    </button>
-                                    <button 
-                                        onClick={handleGeminiImageGeneration}
-                                        disabled={generatingImg !== null}
-                                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded flex items-center justify-center gap-2 disabled:opacity-50"
-                                        title="Use Gemini API image generation if this project has quota"
-                                    >
-                                        {generatingImg !== null ? <Wand2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                        Google Gemini
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                        {imagePromptSuggestions.length === 0 && (
-                           <p className="text-xs text-slate-500 text-center">No image prompts.</p>
-                        )}
-                    </div>
-
                     <div
                         onDrop={handleImageDrop}
                         onDragOver={(e) => e.preventDefault()}
@@ -1682,109 +1740,75 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                         <Search className="w-4 h-4" />
                         Search Images & YouTube
                     </button>
-                </div>
 
-                 {/* Media Manager */}
-                <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                        <h3 className="text-sm font-semibold text-slate-800">Media Assets</h3>
-                        <div className="flex items-center flex-wrap gap-2">
-                            <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${assetsHandle ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-                                {assetsHandle ? `Linked: ${assetsHandle.name}` : 'No Access'}
-                            </span>
-                            <button
-                                type="button"
-                                onClick={onLinkAssets}
-                                className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
-                            >
-                                {assetsHandle ? 'Reconnect Media Folder' : 'Connect Media Folder'}
-                            </button>
-                        </div>
-                    </div>
-                    {!assetsHandle && (
-                        <p role="status" className="text-xs text-amber-800 bg-amber-50 rounded p-2 mb-3">
-                            Upload is unavailable because no media folder was found. Reconnect this course's existing media folder first. Chrome and Edge do not transfer folder permissions from your previous computer.
-                        </p>
-                    )}
-                    {isSandbox && (
-                        <p role="status" className="text-xs text-amber-800 bg-amber-50 rounded p-2 mb-3">
-                            Browser-session mode: newly uploaded media will not be included in the downloaded .scormproj file. Reopen this course with direct folder access before adding media that needs to be saved.
-                        </p>
-                    )}
-                    
-                    <div className="space-y-3 mb-4 max-h-[400px] overflow-y-auto">
-                    {allMedia?.map(m => {
-                        const type = getMediaType(m);
-                        const isImage = type === 'image';
-                        const isAudio = type === 'audio';
-                        const isVideo = type === 'video';
-                        const isDiscovered = discoveredMedia.some(dm => dm.id === m.id);
-                        const isCandidate = Boolean(m.candidate);
-
-                        return (
-                            <div key={m.id} className={`flex flex-col gap-2 p-3 rounded border hover:border-blue-200 transition-colors relative ${isDiscovered ? 'bg-amber-50 border-amber-200' : isCandidate ? 'bg-violet-50 border-violet-200' : 'bg-slate-50 border-slate-100'}`}>
-                                <div className="flex items-start gap-3">
-                                    <div className="w-20 h-20 bg-slate-200 rounded flex items-center justify-center shrink-0 overflow-hidden border border-slate-300 relative group">
-                                    {isImage && previews[m.id] ? (
-                                        <img 
-                                            src={previews[m.id]} 
-                                            alt="preview" 
-                                            onClick={() => setExpandedImage(m.id)}
-                                            className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity" 
-                                            title="Click to expand"
+                    <details className="mt-4 rounded-md border border-blue-100 bg-blue-50/40">
+                      <summary className="cursor-pointer select-none p-3 font-semibold text-xs text-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+                        ChatGPT & Gemini Image Prompt Suggestions ({imagePromptSuggestions.length})
+                      </summary>
+                      <div className="px-3 pb-3">
+                    <div className="space-y-3">
+                        {imagePromptSuggestions.length > 0 && (
+                            <>
+                                <div className="space-y-2">
+                                    {imagePromptSuggestions.map((prompt, i) => (
+                                        <label key={i} className="flex items-start gap-2 bg-blue-50/70 p-3 rounded border border-blue-100 cursor-pointer hover:border-blue-300">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedImagePromptIndexes.includes(i)}
+                                                onChange={() => toggleImagePromptSelection(i)}
+                                                className="mt-0.5 accent-blue-600"
+                                            />
+                                            <span className="text-xs text-slate-700 italic leading-relaxed">"{prompt}"</span>
+                                        </label>
+                                    ))}
+                                    <label className="flex items-start gap-2 bg-white p-3 rounded border border-blue-100 cursor-pointer hover:border-blue-300">
+                                        <input
+                                            type="checkbox"
+                                            checked={isCustomImagePromptSelected}
+                                            onChange={() => setIsCustomImagePromptSelected(prev => !prev)}
+                                            className="mt-0.5 accent-blue-600"
                                         />
-                                    ) : isAudio ? (
-                                        <FileAudio className="w-8 h-8 text-slate-500" />
-                                    ) : isVideo ? (
-                                        <FileVideo className="w-8 h-8 text-slate-500" />
-                                    ) : (
-                                        <Clock className="w-8 h-8 text-slate-500" />
-                                    )}
-                                    </div>
-                                    <div className="overflow-hidden flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                            <p className="text-sm font-medium text-slate-700 truncate" title={m.title}>{m.title || m.storageId}</p>
-                                            {isDiscovered && <span className="text-[9px] bg-amber-200 text-amber-800 px-1 rounded">New</span>}
-                                            {isCandidate && <span className="text-[9px] bg-violet-200 text-violet-800 px-1 rounded">PPT Candidate</span>}
-                                        </div>
-                                        <p className="text-[10px] text-slate-500 truncate mb-1">ID: {m.storageId}</p>
-                                        {isCandidate && (
-                                          <button
-                                            type="button"
-                                            onClick={() => onChange({
-                                              ...data,
-                                              media: (data.media || []).map(item => item.id === m.id ? { ...item, candidate: false } : item)
-                                            })}
-                                            className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700"
-                                          >
-                                            <CheckCircle2 className="w-3 h-3" />
-                                            Add to Page
-                                          </button>
-                                        )}
-                                    </div>
+                                        <textarea
+                                            value={customImagePrompt}
+                                            onChange={(e) => {
+                                                setCustomImagePrompt(e.target.value);
+                                                if (e.target.value.trim()) setIsCustomImagePromptSelected(true);
+                                            }}
+                                            rows={3}
+                                            className="min-w-0 flex-1 p-2 text-xs border border-slate-200 rounded bg-white text-slate-800 focus:outline-none focus:border-blue-400"
+                                            placeholder="Type or paste a custom image prompt..."
+                                        />
+                                    </label>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2">
                                     <button 
-                                        onClick={() => handleDeleteMedia(m.id, m.storageId)}
-                                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors ml-auto top-3 right-3 shrink-0"
-                                        title="Remove from page (keep original file on disk)"
+                                        onClick={handleChatGptImageGeneration}
+                                        className="w-full py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-semibold rounded flex items-center justify-center gap-2"
                                     >
-                                        <Trash2 className="w-4 h-4" />
+                                        <ExternalLink className="w-3 h-3" />
+                                        Generate with ChatGPT 2.0 Image
+                                    </button>
+                                    <button 
+                                        onClick={handleGeminiImageGeneration}
+                                        disabled={generatingImg !== null}
+                                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded flex items-center justify-center gap-2 disabled:opacity-50"
+                                        title="Use Gemini API image generation if this project has quota"
+                                    >
+                                        {generatingImg !== null ? <Wand2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                                        Google Gemini
                                     </button>
                                 </div>
-                                {isAudio && (
-                                    <audio controls src={previews[m.id]} className="w-full h-8 mt-1" />
-                                )}
-                            </div>
-                        );
-                    })}
-                    {(!allMedia || allMedia.length === 0) && (
-                        <div className="text-center py-8 text-slate-400 text-xs italic bg-slate-50 rounded border border-dashed border-slate-200">
-                            No media assets attached.<br/>
-                            Upload or Generate above.
-                        </div>
-                    )}
+                            </>
+                        )}
+                        {imagePromptSuggestions.length === 0 && (
+                           <p className="text-xs text-slate-500 text-center">No image prompts.</p>
+                        )}
                     </div>
 
+                      </div>
+                    </details>
                 </div>
+
                  {/* Captions AI Generator */}
                 <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
                     <div className="flex justify-between items-center mb-3">
@@ -1805,27 +1829,6 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                     </div>
 
                     <div className="mb-4">
-                        <button 
-                            onClick={handleTranscribe}
-                            disabled={transcribing || !assetsHandle || !featuredAudio}
-                            className={`w-full py-3 rounded-md flex items-center justify-center gap-2 text-sm font-semibold transition-all ${
-                                transcribing 
-                                ? 'bg-purple-100 text-purple-700 cursor-not-allowed' 
-                                : 'bg-purple-600 text-white hover:bg-purple-700 shadow-sm hover:shadow-md'
-                            }`}
-                        >
-                            {transcribing ? (
-                                <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    Generating Captions...
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles className="w-4 h-4" />
-                                    Generate Captions from Audio
-                                </>
-                            )}
-                        </button>
                         {!assetsHandle ? (
                              <p role="status" className="text-xs text-amber-700 mt-2 text-center">
                                  Captions are disabled because the media folder is not connected.{' '}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AISettings } from '../types';
 import { Settings, Save, X, Cpu } from 'lucide-react';
-import { GEMINI_MODEL_OPTIONS } from '../constants';
+import { getGeminiModelOptions } from '../constants';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -12,15 +12,17 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, onSave }) => {
   const [localSettings, setLocalSettings] = useState<AISettings>(settings);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalSettings(settings);
+    setSaveError(null);
   }, [settings, isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-50 overflow-y-auto p-4 sm:p-6">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center z-[140] overflow-y-auto p-4 sm:p-6">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-3rem)] flex flex-col animate-in fade-in zoom-in duration-200">
         <div className="flex justify-between items-center gap-4 p-6 pb-4 border-b border-slate-200 flex-shrink-0">
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -47,10 +49,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
               onChange={(e) => setLocalSettings({ ...localSettings, model: e.target.value as any })}
               className="w-full p-2 bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
             >
-                {GEMINI_MODEL_OPTIONS.map(option => (
+                {getGeminiModelOptions(localSettings.model).map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
             </select>
+            <p className="mt-1 text-[11px] text-slate-500">Free-tier models are subject to your Google AI Studio project quota. Your selected model is shared across courses in this browser.</p>
           </div>
 
           <div className="pt-2 border-t border-slate-200">
@@ -200,10 +203,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
              </div>
           </div>
           
+          {saveError && (
+            <p role="alert" className="p-3 text-xs text-red-800 bg-red-50 border border-red-200 rounded">
+              {saveError}
+            </p>
+          )}
           <button
             onClick={() => {
+              try {
                 onSave(localSettings);
+                setSaveError(null);
                 onClose();
+              } catch (error) {
+                setSaveError(error instanceof Error ? error.message : 'Could not save settings in this browser.');
+              }
             }}
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium flex items-center justify-center gap-2 transition-colors sticky bottom-0"
           >

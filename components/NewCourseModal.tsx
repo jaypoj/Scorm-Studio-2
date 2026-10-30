@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Archive, Bot, BookOpen, FileText, FolderArchive, Loader2, Presentation, Upload, X } from 'lucide-react';
+import { Archive, ArrowRight, Bot, BookOpen, CheckCircle2, FileText, FolderArchive, Loader2, Presentation, Settings, Upload, X } from 'lucide-react';
 import { AISettings, AiRateLimitLevel } from '../types';
-import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_OPTIONS } from '../constants';
+import { DEFAULT_GEMINI_MODEL, getGeminiModelOptions } from '../constants';
 
 export interface NewCourseRequest {
   courseName: string;
@@ -25,6 +25,8 @@ interface NewCourseModalProps {
   aiSettings: AISettings;
   allowPowerPointImport?: boolean;
   onClose: () => void;
+  onOpenAiSettings: () => void;
+  destinationFolderName?: string | null;
   onCreate: (request: NewCourseRequest) => Promise<void>;
 }
 
@@ -40,7 +42,7 @@ const ACCEPTED_REFERENCE_TYPES = '.xls,.xlsx,.csv,.pdf,.txt,.doc,.docx,.rtf,.jso
 const ACCEPTED_POWERPOINT_TYPES = '.ppt,.pptx';
 const ACCEPTED_SCORM_TYPES = '.zip';
 
-export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, progress = null, aiSettings, allowPowerPointImport = false, onClose, onCreate }) => {
+export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreating, error, status, progress = null, aiSettings, allowPowerPointImport = true, onClose, onOpenAiSettings, destinationFolderName, onCreate }) => {
   const [courseName, setCourseName] = useState('');
   const [difficulty, setDifficulty] = useState(3);
   const [topicText, setTopicText] = useState('');
@@ -71,6 +73,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
     && (mode !== 'powerpoint' || Boolean(powerPointFile))
     && (mode !== 'legacy-scorm' || Boolean(legacyScormZipFile || legacyScormFolderFiles.length));
   const selectedRateLimit = RATE_LIMIT_OPTIONS.find(option => option.value === rateLimit) || RATE_LIMIT_OPTIONS[2];
+  const hasSource = mode === 'manual' || (mode === 'ai' ? topics.length > 0 : mode === 'powerpoint' ? Boolean(powerPointFile) : Boolean(legacyScormZipFile || legacyScormFolderFiles.length));
   const addReferenceFiles = (files: FileList | File[]) => {
     const incoming = Array.from(files);
     setReferenceFiles(prev => {
@@ -90,16 +93,31 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
         <div className="p-5 border-b border-slate-200 flex items-start justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-900">Create New Course</h2>
-            <p className="text-sm text-slate-500 mt-1">Choose a working folder, then build with AI or start manually.</p>
+            <p className="text-sm text-slate-500 mt-1">Name your course, choose a creation method, then select where to save it.</p>
           </div>
-          <button onClick={onClose} disabled={isCreating} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-50">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button type="button" onClick={onOpenAiSettings} disabled={isCreating} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 px-2 py-2 rounded hover:bg-blue-50 disabled:opacity-50">
+              <Settings className="w-4 h-4" /> AI Settings
+            </button>
+            <button onClick={onClose} disabled={isCreating} aria-label="Close new course" className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-50">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-5 overflow-y-auto space-y-5">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-950" aria-label="Course creation steps">
+            <p className="font-bold flex items-center gap-2 mb-2"><ArrowRight className="w-4 h-4 text-emerald-700" /> START HERE</p>
+            <div className="space-y-1 text-xs">
+              <p className="flex gap-2 items-center">{courseName.trim() ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <ArrowRight className="w-4 h-4 text-emerald-700" />} 1. Enter your new course name once.</p>
+              <p className="flex gap-2 items-center"><CheckCircle2 className="w-4 h-4 text-emerald-600" /> 2. Select how you want to build the course.</p>
+              <p className="flex gap-2 items-center">{hasSource ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <ArrowRight className="w-4 h-4 text-emerald-700" />} 3. {mode === 'ai' ? 'Enter one or more topics and optionally attach reference files.' : mode === 'manual' ? 'Add topics below, or start with blank pages.' : 'Select the source file or package below.'}</p>
+              <p className="flex gap-2 items-center"><ArrowRight className="w-4 h-4 text-emerald-700" /> 4. Click Create. {destinationFolderName ? `Your course will be saved inside ${destinationFolderName}.` : 'Choose the parent folder where the app will create your course folder.'}</p>
+            </div>
+            <p className="text-[11px] text-emerald-800 mt-2">The app creates the .scormproj file, media folder, and backups automatically. You do not need to name or upload the project file again.</p>
+          </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Course Name</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1"><span className="text-emerald-700 font-bold">1.</span> Course Name</label>
             <input
               value={courseName}
               onChange={(e) => setCourseName(e.target.value)}
@@ -108,10 +126,12 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             />
           </div>
 
+          <div>
+            <p className="text-sm font-semibold text-slate-700 mb-2"><span className="text-emerald-700 font-bold">2.</span> Choose a creation method <span className="font-normal text-slate-500">(select one card)</span></p>
           <div className={`grid grid-cols-1 ${allowPowerPointImport ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-3`}>
             <button
               onClick={() => setMode('ai')}
-              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'ai' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'ai' ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400' : 'border-slate-200 bg-white'}`}
             >
               <div className="font-semibold text-slate-900 flex items-center gap-2"><Bot className="w-4 h-4" /> Build with AI</div>
               <p className="text-xs text-slate-600 mt-1">Generate welcome, objectives, topic pages, knowledge checks, image prompts, video terms, and final quiz.</p>
@@ -119,7 +139,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             {allowPowerPointImport && (
               <button
                 onClick={() => setMode('powerpoint')}
-                className={`p-4 border rounded-lg text-left transition-colors ${mode === 'powerpoint' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+                className={`p-4 border rounded-lg text-left transition-colors ${mode === 'powerpoint' ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400' : 'border-slate-200 bg-white'}`}
               >
                 <div className="font-semibold text-slate-900 flex items-center gap-2"><Presentation className="w-4 h-4" /> Import PowerPoint</div>
                 <p className="text-xs text-slate-600 mt-1">Convert each slide into an editable course page and copy slide media into the project.</p>
@@ -127,20 +147,21 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             )}
             <button
               onClick={() => setMode('legacy-scorm')}
-              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'legacy-scorm' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'legacy-scorm' ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400' : 'border-slate-200 bg-white'}`}
             >
               <div className="font-semibold text-slate-900 flex items-center gap-2"><Archive className="w-4 h-4" /> Import Legacy SCORM</div>
               <p className="text-xs text-slate-600 mt-1">Convert an older SCORM package folder or zip into a fully editable course project.</p>
             </button>
             <button
               onClick={() => setMode('manual')}
-              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'manual' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}
+              className={`p-4 border rounded-lg text-left transition-colors ${mode === 'manual' ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400' : 'border-slate-200 bg-white'}`}
             >
               <div className="font-semibold text-slate-900 flex items-center gap-2"><BookOpen className="w-4 h-4" /> Build Manually</div>
               <p className="text-xs text-slate-600 mt-1">Create the project file, media folder, restore folder, and starter pages for the topics you list.</p>
             </button>
           </div>
 
+          </div>
           {mode === 'powerpoint' && (
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">PowerPoint File</label>
@@ -275,11 +296,11 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
                   onChange={(e) => setModel(e.target.value)}
                   className="w-full p-2 bg-white text-slate-900 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 >
-                  {GEMINI_MODEL_OPTIONS.map(option => (
+                  {getGeminiModelOptions(model).map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
-                <p className="text-xs text-slate-500 mt-1">Defaults to your AI Settings model, but can be changed per new course.</p>
+                <p className="text-xs text-slate-500 mt-1">Defaults to AI Settings; you can change it here for this new course. Free-tier API usage depends on project quotas.</p>
               </div>
 
               <div>
@@ -392,6 +413,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
         </div>
 
         <div className="p-5 border-t border-slate-200 bg-slate-50">
+          <p className="text-xs text-slate-600 mb-2">{destinationFolderName ? `Destination: ${destinationFolderName} (a new subfolder will be created)` : 'Final step: choose an existing parent folder. Your new course files will be organized automatically.'}</p>
           <button
             type="button"
             onClick={() => onCreate({
@@ -410,7 +432,7 @@ export const NewCourseModal: React.FC<NewCourseModalProps> = ({ isOpen, isCreati
             className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded font-semibold flex items-center justify-center gap-2"
           >
             {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : mode === 'ai' ? <Bot className="w-4 h-4" /> : mode === 'powerpoint' ? <Presentation className="w-4 h-4" /> : mode === 'legacy-scorm' ? <Archive className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
-            {isCreating ? (status || 'Creating Course...') : mode === 'powerpoint' ? 'Import PowerPoint & Create Course' : mode === 'legacy-scorm' ? 'Import Legacy SCORM & Create Course' : 'Choose Folder & Create Course'}
+            {isCreating ? (status || 'Creating Course...') : destinationFolderName ? 'Create Course in Selected Folder' : 'Choose Destination Folder & Create Course'}
           </button>
         </div>
       </div>
