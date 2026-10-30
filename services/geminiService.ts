@@ -12,10 +12,9 @@ const IMAGE_GENERATION_MODEL = 'gemini-2.5-flash-image';
 const TRANSCRIPTION_MIN_INTERVAL_MS = 4100;
 let lastTranscriptionRequestAt = 0;
 const TRANSCRIPTION_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
   DEFAULT_GEMINI_MODEL,
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
 ];
 
 type GeminiErrorDetails = {
@@ -193,8 +192,8 @@ const readReferenceParts = async (files: File[], rateLimit: AiRateLimitLevel = '
 const getCourseModelFallbacks = (selectedModel: string) => Array.from(new Set([
   selectedModel,
   DEFAULT_GEMINI_MODEL,
-  'gemini-2.5-flash',
-  'gemini-2.5-flash-lite',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
 ]));
 
 async function generateContentWithModelFallback(settings: AISettings, contents: any, config?: any) {

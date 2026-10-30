@@ -76,7 +76,7 @@ await check('Folder inspection does not create, change, or remove files', async 
 await check('All editor views receive the folder and AI Settings actions', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   assert.equal((app.match(/onLinkAssets=\{handleLinkAssets\}/g) || []).length, 3);
-  assert.equal((app.match(/onOpenAiSettings=\{\(\) => setIsSettingsOpen\(true\)\}/g) || []).length, 3);
+  assert.equal((app.match(/onOpenAiSettings=\{\(\) => setIsSettingsOpen\(true\)\}/g) || []).length, 6); // Three editors and three new-course dialogs.
   assert.equal((app.match(/isSandbox=\{context.isSandbox\}/g) || []).length, 3);
 });
 await check('Narration, captions, and media explain missing prerequisites', () => {
