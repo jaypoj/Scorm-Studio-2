@@ -604,6 +604,48 @@ async function check(id, description, fn) {
     assert.equal(await s.run('current'), 0);
     assert.equal(s.doc.currentKind, null);
   });
+  await check('E25', 'A completed lesson never labels the next unanswered knowledge check complete', async () => {
+    const lms = new MockLms();
+    const s = await simulator({ knowledge: true, knowledgePolicy: 'pass', lessons: 2 }, lms);
+    await s.run('loadPage(2)');
+    s.answer(0);
+    await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    assert.equal(s.doc.getElementById('next-button').disabled, false);
+    assert.match(s.doc.getElementById('runtime-alert').textContent, /Knowledge check complete/);
+
+    await s.run('nextPage()');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await s.run('currentPageId()'), 'topic-1');
+    assert.equal(s.doc.currentCard.button.disabled, false, 'New check should accept its own answer');
+    assert.equal(s.doc.getElementById('next-button').disabled, true, 'Next remains gated until new question is passed');
+    assert.equal(s.doc.getElementById('runtime-alert').textContent, '', 'Old success message must be removed');
+    assert.equal(s.doc.getElementById('runtime-alert').hidden, true);
+
+    await s.run('prevPage()');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(s.doc.currentCard.button.disabled, true, 'Earlier check remains completed');
+    await s.run('nextPage()');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(s.doc.getElementById('next-button').disabled, true, 'Returning does not wrongly complete new check');
+    s.answer(0);
+    await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    assert.equal(s.doc.getElementById('next-button').disabled, false);
+  });
+  await check('E26', 'A failed page load does not clear an alert about the current page', async () => {
+    const s = await simulator({ knowledge: true, knowledgePolicy: 'pass', failPageLoads: { 'pages/topic-1.html': 1 }, lessons: 2 });
+    await s.run('loadPage(2)');
+    s.answer(0);
+    await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    await s.run('nextPage()');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await s.run('currentPageId()'), 'topic-0');
+    assert.match(s.doc.getElementById('runtime-status').textContent, /Could not load/);
+    assert.match(s.doc.getElementById('runtime-alert').textContent, /Knowledge check complete/);
+    await s.run('nextPage()');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await s.run('currentPageId()'), 'topic-1');
+    assert.equal(s.doc.getElementById('runtime-alert').hidden, true);
+  });
   // Production `npm ci` installs JSZip. Validate a REAL SCORM ZIP byte stream in GitHub Actions.
   let RealJSZip;
   try { RealJSZip = require('jszip'); } catch (error) { /* Absent in the upload-only inspection environment. */ }
