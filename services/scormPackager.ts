@@ -1,4 +1,6 @@
 import JSZip from 'jszip';
+import scormApiRuntime from './scormRuntime/api.js?raw';
+import navigationRuntime from './scormRuntime/navigation.js?raw';
 import { FileSystemDirectoryHandle, MediaItem, Question, ScormProject, Topic, WelcomePage, LearningObjectivesPage } from '../types';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, sanitizeWebVtt } from '../utils/captions';
 
@@ -547,17 +549,29 @@ const getCorrectOptionIndex = (question: Question, options: string[]) => {
   const directIndex = options.findIndex(option => String(option).trim() === String(question.correctAnswer).trim());
   if (directIndex >= 0) return directIndex;
   const normalizedIndex = options.findIndex(option => normalizeAnswerText(option) === correct);
-  return normalizedIndex >= 0 ? normalizedIndex : 0;
+  return normalizedIndex;
 };
 
 const renderQuestion = (question: Question, index: number, prefix: string) => {
   const name = `${prefix}-q-${index}`;
   const options = getQuestionOptions(question);
+  if (!['multiple-choice', 'true-false'].includes(question.type)) {
+    throw new Error(`Cannot export ${prefix}, question ${index + 1}: unsupported type ${question.type}.`);
+  }
   const correctOptionIndex = getCorrectOptionIndex(question, options);
+  if (correctOptionIndex < 0 || !normalizeAnswerText(question.correctAnswer)) {
+    throw new Error(`Cannot export ${prefix}, question ${index + 1}: set a correct answer matching one of its choices.`);
+  }
+  if (options.length < 2 || options.some(option => !String(option).trim())) {
+    throw new Error(`Cannot export ${prefix}, question ${index + 1}: provide at least two nonempty choices.`);
+  }
+  if (new Set(options.map(normalizeAnswerText)).size !== options.length) {
+    throw new Error(`Cannot export ${prefix}, question ${index + 1}: answer choices must be distinct for reliable scoring.`);
+  }
   const correctOptionId = `option_${correctOptionIndex + 1}`;
   const questionId = safeId(question.id || name);
 
-  return `<div class="question" data-question-id="${escapeHtml(questionId)}" data-question-type="${escapeHtml(question.type)}" data-correct-option-id="${escapeHtml(correctOptionId)}" data-correct-answer="${escapeHtml(String(options[correctOptionIndex] ?? question.correctAnswer))}" data-correct-feedback="${escapeHtml(question.feedback?.correct || 'Correct.')}" data-incorrect-feedback="${escapeHtml(question.feedback?.incorrect || 'Review the material and try again.')}">
+  return `<div class="question" data-question-id="${escapeHtml(questionId)}" data-question-type="${escapeHtml(question.type)}" data-correct-option-id="${escapeHtml(correctOptionId)}" data-correct-feedback="${escapeHtml(question.feedback?.correct || 'Correct.')}" data-incorrect-feedback="${escapeHtml(question.feedback?.incorrect || 'Review the material and try again.')}">
     <p class="question-text">${escapeHtml(question.question)}</p>
     <div class="options">
       ${options.map((option, optionIndex) => `<label class="option"><input type="radio" name="${escapeHtml(name)}" value="option_${optionIndex + 1}" data-answer-text="${escapeHtml(String(option))}"><span>${escapeHtml(String(option))}</span></label>`).join('')}
@@ -569,7 +583,7 @@ const renderQuestion = (question: Question, index: number, prefix: string) => {
 const renderKnowledgeCheck = (page: Page) => {
   const questions = 'knowledgeCheck' in page ? page.knowledgeCheck?.questions || [] : [];
   if (!questions.length) return '';
-  return `<section class="knowledge-check">
+  return `<section class="knowledge-check" aria-label="Knowledge check">
     <h3>Knowledge Check</h3>
     ${questions.map((question, index) => renderQuestion(question, index, page.id)).join('')}
     <button class="check-button" type="button" onclick="submitKnowledgeCheck(this)">Submit Answer</button>
@@ -581,10 +595,12 @@ const renderAssessment = (project: ScormProject) => {
   const questions = assessment.questions || [];
   return `<section class="page-card assessment-card">
     <h2>Final Assessment</h2>
-    <p class="muted">Pass mark: ${assessment.passMark || 80}%</p>
+    <p class="muted">Pass mark: ${assessment.passMark}%</p>
     ${questions.map((question, index) => renderQuestion(question, index, 'assessment')).join('')}
-    <button class="check-button" type="button" onclick="submitAssessment()">Submit Assessment</button>
-    <div id="assessment-result" class="assessment-result" aria-live="polite"></div>
+    <button id="assessment-submit" class="check-button" type="button" onclick="submitAssessment()">Submit Assessment</button>
+    <button id="assessment-retake" class="check-button" type="button" onclick="retakeAssessment()" hidden>Retake Assessment</button>
+    <button id="assessment-save-exit" class="check-button" type="button" onclick="saveAndExitCourse()" hidden>Save &amp; Exit</button>
+    <div id="assessment-result" class="assessment-result" role="status" aria-live="polite"></div>
   </section>`;
 };
 
@@ -644,7 +660,7 @@ const buildStyles = () => `*{box-sizing:border-box}html,body{margin:0;height:100
 
 const buildMediaLightboxStyles = () => `.expandable-media-frame{position:relative}.expandable-media{cursor:zoom-in}.media-expand-button{position:absolute;right:10px;top:10px;z-index:2;border:1px solid rgba(255,255,255,.34);border-radius:999px;background:rgba(15,14,19,.82);color:#fff;font-weight:800;font-size:12px;letter-spacing:.03em;padding:7px 12px;cursor:zoom-in;box-shadow:0 12px 32px -20px #000;backdrop-filter:blur(6px)}.media-expand-button:hover,.media-expand-button:focus{background:rgba(139,92,246,.94);outline:2px solid rgba(255,255,255,.55);outline-offset:2px}.media-lightbox{position:fixed;inset:0;z-index:50000;background:rgba(6,5,9,.9);display:flex;align-items:center;justify-content:center;padding:28px;opacity:0;visibility:hidden;transition:opacity .16s ease,visibility .16s ease}.media-lightbox.is-open{opacity:1;visibility:visible}.media-lightbox-panel{position:relative;max-width:min(96vw,1400px);max-height:92vh;width:100%;display:flex;flex-direction:column;gap:10px}.media-lightbox-title{color:#fff;font-size:14px;font-weight:800;letter-spacing:.03em;min-height:20px;padding-right:58px;text-shadow:0 1px 2px #000}.media-lightbox-close{position:absolute;right:0;top:0;width:44px;height:44px;border:1px solid rgba(255,255,255,.4);border-radius:999px;background:rgba(255,255,255,.12);color:#fff;font-size:28px;line-height:1;cursor:pointer}.media-lightbox-close:hover,.media-lightbox-close:focus{background:#fff;color:#17141d;outline:2px solid #a78bfa;outline-offset:2px}.media-lightbox-body{display:flex;align-items:center;justify-content:center;min-height:40vh;max-height:calc(92vh - 60px)}.media-lightbox-body img,.media-lightbox-body video,.media-lightbox-body iframe{display:block;max-width:100%;max-height:calc(92vh - 70px);border:0;border-radius:10px;background:#0f0e13;box-shadow:0 30px 80px -42px #000}.media-lightbox-body iframe{width:min(96vw,1280px);height:min(72vh,720px)}.media-lightbox-body video{width:min(96vw,1280px)}body.media-lightbox-locked{overflow:hidden}@media(max-width:700px){.media-lightbox{padding:14px}.media-lightbox-body iframe{height:54vh}.media-expand-button{right:8px;top:8px;padding:6px 10px}}`;
 
-const buildScormApi = () => `window.SCORM={api:null,initialized:false,findAPI:function(w){var tries=0;while(w&&tries<10){if(w.API)return w.API;w=w.parent;tries++}return null},init:function(){this.api=this.findAPI(window)||this.findAPI(window.opener);if(this.api&&!this.initialized){this.api.LMSInitialize('');this.initialized=true}return this.initialized},get:function(k){try{return this.api?this.api.LMSGetValue(k):''}catch(e){return''}},set:function(k,v){try{if(this.api)this.api.LMSSetValue(k,String(v))}catch(e){}},commit:function(){try{if(this.api)this.api.LMSCommit('')}catch(e){}},finish:function(){try{if(this.api)this.api.LMSFinish('')}catch(e){}}};window.addEventListener('load',function(){SCORM.init()});window.addEventListener('beforeunload',function(){SCORM.set('cmi.core.exit','suspend');SCORM.commit();SCORM.finish()});`;
+const buildScormApi = () => scormApiRuntime;
 
 const buildExportContentStyles = () => `.topic-text p{margin:0 0 12px}.topic-text p:last-child{margin-bottom:0}.topic-text p,.topic-text div,.topic-text span,.topic-text font,.topic-text blockquote,.topic-text li,.topic-text strong,.topic-text em,.topic-text b,.topic-text i,.topic-text [style*="color"]{color:inherit!important}.topic-text blockquote{margin:10px 0 14px 28px;padding-left:16px;border-left:3px solid rgba(124,58,237,.45)}.topic-text blockquote p{margin:6px 0}.topic-text ul,.topic-text ol{margin:12px 0 16px;padding-left:28px}.topic-text ul{list-style:disc}.topic-text ol{list-style:decimal}.topic-text li{margin:6px 0;padding-left:3px}.topic-text li>ul,.topic-text li>ol{margin:6px 0 6px 8px}.topic-text table{table-layout:auto;margin:16px 0 20px}.topic-text th,.topic-text td{vertical-align:top}.topic-text th{color:#fff}.topic-text tr:nth-child(even) td{background:#272231}.topic-text img{max-width:100%;height:auto;border-radius:8px;display:block;margin:16px 0}`;
 
@@ -658,118 +674,28 @@ const buildThemeStyles = (theme: ScormProject['scormConfig']['outputTheme']) => 
   return '';
 };
 
-const buildNavigation = (pages: { id: string; title: string }[], passMark: number, scormConfig: ScormProject['scormConfig']) => `
-const PAGES=${JSON.stringify(pages)};
-const COURSE_SETTINGS=${JSON.stringify({
-  requireKnowledgeCheckBeforeContinue: Boolean(scormConfig?.requireKnowledgeCheckBeforeContinue),
-  requireAudioCompletionBeforeContinue: Boolean(scormConfig?.requireAudioCompletionBeforeContinue),
-})};
-let current=0;
-let navigating=false;
-let failedPageIndex=-1;
-let lastLoadError='';
-const STORAGE_KEY='scormArchitectProgress';
-const parseJson=value=>{try{return value?JSON.parse(value):null}catch(error){return null}};
-function readBrowserStorage(name){try{const storage=window[name];return storage?storage.getItem(STORAGE_KEY):''}catch(error){return''}}
-function writeBrowserStorage(name,value){try{const storage=window[name];if(storage)storage.setItem(STORAGE_KEY,value)}catch(error){}}
-function readStoredState(){if(window.SCORM)SCORM.init();const fromScorm=window.SCORM?parseJson(SCORM.get('cmi.suspend_data')):null;const fromLocal=parseJson(readBrowserStorage('localStorage'))||parseJson(readBrowserStorage('sessionStorage'));return fromScorm||fromLocal||{}}
-const storedState=readStoredState();
-const visited=new Set(Array.isArray(storedState.visited)?storedState.visited:[]);
-const completedKnowledgeChecks=new Set(Array.isArray(storedState.knowledgeChecks)?storedState.knowledgeChecks:[]);
-const completedAudioPages=new Set(Array.isArray(storedState.audioPages)?storedState.audioPages:[]);
-function el(id){return document.getElementById(id)}
-function getProgress(){return Math.round((visited.size/PAGES.length)*100)}
-function currentPageId(){return PAGES[current]?PAGES[current].id:''}
-function save(){const state={version:1,visited:Array.from(visited),knowledgeChecks:Array.from(completedKnowledgeChecks),audioPages:Array.from(completedAudioPages),currentPageId:currentPageId()};const serialized=JSON.stringify(state);writeBrowserStorage('sessionStorage',serialized);writeBrowserStorage('localStorage',serialized);const progress=getProgress();el('progress-fill').style.width=progress+'%';el('progress-text').textContent=progress+'% complete';if(window.SCORM){SCORM.set('cmi.suspend_data',serialized);SCORM.set('cmi.core.lesson_location',currentPageId());SCORM.set('cmi.core.exit','suspend');const currentStatus=String(SCORM.get('cmi.core.lesson_status')||'').toLowerCase();if(!['passed','failed'].includes(currentStatus)){SCORM.set('cmi.core.lesson_status',progress>=100?'completed':'incomplete')}SCORM.commit()}}
-function setNav(){
-  document.querySelectorAll('.nav-item').forEach((n,i)=>n.classList.toggle('active',i===current));
-  el('prev-button').disabled=navigating||current===0;
-  el('next-button').textContent=failedPageIndex>=0?'Retry Page':current===PAGES.length-1?'Finish':'Next';
-  updateNextGate();
-}
-async function loadPage(index){
-  if(navigating||!Number.isInteger(index)||index<0||index>=PAGES.length)return;
-  const page=PAGES[index];
-  navigating=true;
-  setNav();
-  try{
-    const res=await fetch('pages/'+page.id+'.html');
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const html=await res.text();
-    const container=el('content-container');
-    container.innerHTML=html;
-    current=index;
-    failedPageIndex=-1;
-    lastLoadError='';
-    container.scrollTop=0;
-    document.documentElement.scrollTop=0;
-    document.body.scrollTop=0;
-    initializeCaptions();
-    initializeCompletionGate();
-    visited.add(page.id);
-    save();
-    window.scrollTo(0,0);
-  }catch(error){
-    failedPageIndex=index;
-    lastLoadError='Could not load "'+page.title+'". Select Retry Page to try again.';
-    console.warn('SCORM page load failed:',page.id,error);
-    showAlert(lastLoadError);
-  }finally{
-    navigating=false;
-    setNav();
-  }
-}
-function nextPage(){
-  if(navigating)return;
-  if(failedPageIndex>=0){loadPage(failedPageIndex);return}
-  const messages=getGateState();
-  if(messages.length){showAlert(messages.join(' '));return}
-  if(current<PAGES.length-1)loadPage(current+1);
-  else{if(window.SCORM){SCORM.set('cmi.core.lesson_status','completed');SCORM.commit()}showAlert('Course complete')}
-}
-function prevPage(){if(!navigating&&current>0)loadPage(current-1)}
-function showAlert(message){const d=document.createElement('div');d.className='scorm-alert';d.textContent=message;document.body.appendChild(d);setTimeout(()=>d.remove(),3500)}
-function timeToSeconds(value){const clean=String(value||'').trim().replace(',','.');const parts=clean.split(':').map(Number);if(parts.length===3)return parts[0]*3600+parts[1]*60+parts[2];if(parts.length===2)return parts[0]*60+parts[1];return Number(clean)||0}
-function cleanCaptionText(value){const div=document.createElement('div');div.innerHTML=String(value||'').replace(/<[^>]+>/g,'');return(div.textContent||div.innerText||'').replace(/\\s+/g,' ').trim()}
-function parseVtt(text){const source=String(text||'').replace(/\\r/g,'').replace(/^\\s*\`\`\`(?:webvtt|vtt)?/i,'').replace(/\`\`\`\\s*$/,'');const lines=source.split('\\n');const cues=[];for(let i=0;i<lines.length;i++){const line=lines[i].trim();if(!line||line==='WEBVTT'||line.startsWith('NOTE')||!line.includes('-->'))continue;const timing=line.split('-->');const start=timeToSeconds(timing[0]);const end=timeToSeconds((timing[1]||'').trim().split(/\\s+/)[0]);const textLines=[];i++;while(i<lines.length){const next=lines[i].trim();if(!next)break;if(next.includes('-->')){i--;break}if(!/^\\d+$/.test(next))textLines.push(next);i++}const cueText=cleanCaptionText(textLines.join(' '));if(cueText&&Number.isFinite(start)&&Number.isFinite(end))cues.push({start,end,text:cueText})}return cues}
-function setCaptionText(box,text,active){box.textContent=text;box.classList.toggle('is-active',Boolean(active))}
-function initializeCaptions(){document.querySelectorAll('.synced-caption[data-caption-src]').forEach(async box=>{const audio=el(box.dataset.audioId);if(!audio)return;try{const response=await fetch(box.dataset.captionSrc,{cache:'no-store'});const cues=parseVtt(await response.text());if(!cues.length){setCaptionText(box,'Captions are attached, but no timed lines were found.',false);return}let lastText='';const update=()=>{const t=audio.currentTime;const cue=cues.find(item=>t>=item.start&&t<=item.end);const nextText=cue?cue.text:(audio.paused&&lastText?lastText:'Captions will appear during playback.');setCaptionText(box,nextText,Boolean(cue));if(cue)lastText=cue.text};box._captionUpdate=update;audio.addEventListener('timeupdate',update);audio.addEventListener('play',update);audio.addEventListener('pause',update);audio.addEventListener('seeked',update);audio.addEventListener('loadedmetadata',update);update()}catch(error){setCaptionText(box,'Captions could not load in this player.',false)}})}
-function toggleCaptions(btn){const box=el(btn.dataset.captionTarget);if(!box)return;const enabled=box.hidden;box.hidden=!enabled;btn.setAttribute('aria-pressed',String(enabled));btn.textContent=enabled?'CC On':'CC Off';if(enabled&&box._captionUpdate)box._captionUpdate()}
-function initializeCompletionGate(){const pageId=currentPageId();const kc=document.querySelector('.knowledge-check');if(kc&&completedKnowledgeChecks.has(pageId)){kc.dataset.completed='true';const btn=kc.querySelector('.check-button');if(btn)btn.textContent='Knowledge Check Complete'}document.querySelectorAll('.narration-audio').forEach(audio=>{if(completedAudioPages.has(pageId))audio.dataset.completed='true';const update=()=>{const duration=Number.isFinite(audio.duration)?audio.duration:0;if(audio.ended||(duration>0&&audio.currentTime>=Math.max(0,duration-.75))){audio.dataset.completed='true';if(!completedAudioPages.has(pageId)){completedAudioPages.add(pageId);save()}}updateNextGate()};audio.addEventListener('timeupdate',update);audio.addEventListener('ended',update);audio.addEventListener('loadedmetadata',update);update()});updateNextGate()}
-function getGateState(){const messages=[];const kc=document.querySelector('.knowledge-check');const audio=document.querySelector('.narration-audio');if(COURSE_SETTINGS.requireKnowledgeCheckBeforeContinue&&kc&&kc.dataset.completed!=='true')messages.push('Complete the knowledge check to continue.');if(COURSE_SETTINGS.requireAudioCompletionBeforeContinue&&audio&&audio.dataset.completed!=='true')messages.push('Listen to the full narration to continue.');return messages}
-function updateNextGate(){
-  const next=el('next-button');
-  if(!next)return;
-  const messages=getGateState();
-  next.disabled=navigating||(failedPageIndex<0&&messages.length>0);
-  next.title=lastLoadError||messages.join(' ');
-  const gate=el('gate-message');
-  if(gate)gate.textContent=lastLoadError||messages.join(' ');
-}
-function submitKnowledgeCheck(btn){const box=btn.closest('.knowledge-check');const questions=Array.from(box.querySelectorAll('.question'));const passed=questions.map(q=>gradeQuestion(q)).every(Boolean);if(passed){completedKnowledgeChecks.add(currentPageId());box.dataset.completed='true';btn.textContent='Knowledge Check Complete';showAlert('Knowledge check complete.');save()}else{box.dataset.completed=String(completedKnowledgeChecks.has(currentPageId()))}updateNextGate()}
-function gradeQuestion(q){const selected=q.querySelector('input:checked');const fb=q.querySelector('.feedback');if(!selected){fb.textContent='Choose an answer first.';fb.className='feedback incorrect';return false}const ok=String(selected.value).trim()===String(q.dataset.correctOptionId).trim();fb.textContent=ok?q.dataset.correctFeedback:q.dataset.incorrectFeedback;fb.className='feedback '+(ok?'correct':'incorrect');return ok}
-function recordAssessmentInteraction(q,index){if(!window.SCORM)return;const selected=q.querySelector('input:checked');const ok=Boolean(selected&&String(selected.value).trim()===String(q.dataset.correctOptionId).trim());const base='cmi.interactions.'+index;SCORM.set(base+'.id',q.dataset.questionId||('assessment_q_'+(index+1)));SCORM.set(base+'.type',q.dataset.questionType==='true-false'?'true-false':'choice');SCORM.set(base+'.student_response',selected?selected.value:'');SCORM.set(base+'.correct_responses.0.pattern',q.dataset.correctOptionId||'');SCORM.set(base+'.result',ok?'correct':'wrong');SCORM.set(base+'.weighting','1')}
-function submitAssessment(){const qs=Array.from(document.querySelectorAll('.assessment-card .question'));const correct=qs.filter(q=>gradeQuestion(q)).length;const score=qs.length?Math.round((correct/qs.length)*100):0;const result=el('assessment-result');const passed=score>=${passMark};result.textContent='Score: '+score+'% - '+(passed?'Passed':'Try again');result.className='assessment-result '+(passed?'pass':'fail');if(window.SCORM){qs.forEach(recordAssessmentInteraction);SCORM.set('cmi.core.score.raw',score);SCORM.set('cmi.core.score.min',0);SCORM.set('cmi.core.score.max',100);SCORM.set('cmi.core.lesson_status',passed?'passed':'failed');SCORM.commit()}}
-function ensureMediaLightbox(){let lightbox=el('media-lightbox');if(lightbox)return lightbox;lightbox=document.createElement('div');lightbox.id='media-lightbox';lightbox.className='media-lightbox';lightbox.setAttribute('role','dialog');lightbox.setAttribute('aria-modal','true');lightbox.setAttribute('aria-label','Expanded media viewer');lightbox.innerHTML='<div class="media-lightbox-panel"><button class="media-lightbox-close" type="button" aria-label="Close expanded media">&times;</button><div class="media-lightbox-title"></div><div class="media-lightbox-body"></div></div>';document.body.appendChild(lightbox);lightbox.addEventListener('click',event=>{if(event.target===lightbox||event.target.closest('.media-lightbox-close'))closeMediaLightbox()});return lightbox}
-function closeMediaLightbox(){const lightbox=el('media-lightbox');if(!lightbox)return;const body=lightbox.querySelector('.media-lightbox-body');if(body)body.innerHTML='';lightbox.classList.remove('is-open');document.body.classList.remove('media-lightbox-locked')}
-function openMediaLightbox(options){const lightbox=ensureMediaLightbox();const title=lightbox.querySelector('.media-lightbox-title');const body=lightbox.querySelector('.media-lightbox-body');if(!body)return;const kind=options.kind||'image';const src=options.src||'';if(!src)return;body.innerHTML='';if(title)title.textContent=options.title||'';let node;if(kind==='video'){node=document.createElement('video');node.controls=true;node.autoplay=false;node.src=src}else if(kind==='iframe'){node=document.createElement('iframe');node.src=src;node.title=options.title||'Expanded video';node.allow='accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';node.allowFullscreen=true}else{node=document.createElement('img');node.src=src;node.alt=options.title||'Expanded image';node.referrerPolicy='no-referrer'}body.appendChild(node);lightbox.classList.add('is-open');document.body.classList.add('media-lightbox-locked');const close=lightbox.querySelector('.media-lightbox-close');if(close)close.focus()}
-function handleMediaExpandClick(event){const explicit=event.target.closest('[data-expand-src]');const inlineImage=!explicit&&event.target.closest('.topic-text img[src]');if(!explicit&&!inlineImage)return;if(event.target.closest('a'))return;event.preventDefault();const source=explicit||inlineImage;const tag=(source.tagName||'').toLowerCase();const kind=source.dataset.expandKind||(tag==='video'?'video':'image');const src=source.dataset.expandSrc||source.getAttribute('src');const title=source.dataset.expandTitle||source.getAttribute('alt')||source.getAttribute('title')||'Expanded media';openMediaLightbox({kind,src,title})}
-document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMediaLightbox()});
-document.addEventListener('click',handleMediaExpandClick);
-document.addEventListener('click',e=>{
-  const nav=e.target.closest('.nav-item');
-  if(!nav)return;
-  e.preventDefault();
-  if(navigating)return;
-  const target=Number(nav.dataset.index);
-  if(!Number.isInteger(target)||target<0||target>=PAGES.length)return;
-  const messages=getGateState();
-  if(target>current&&messages.length){showAlert(messages.join(' '));return}
-  loadPage(target);
-});
-function getInitialPageIndex(){const bookmark=window.SCORM?(SCORM.get('cmi.core.lesson_location')||''):'';const pageId=bookmark||storedState.currentPageId||'';const index=PAGES.findIndex(page=>page.id===pageId);return index>=0?index:0}
-document.addEventListener('DOMContentLoaded',()=>{el('prev-button').onclick=prevPage;el('next-button').onclick=nextPage;loadPage(getInitialPageIndex())});
-`;
+const buildNavigation = (
+  pages: { id: string; title: string; knowledge: boolean; audio: boolean; assessment: boolean }[],
+  project: ScormProject,
+  passMark: number,
+  hasAssessment: boolean,
+) => {
+  const knowledgeCheckPolicy = project.scormConfig.knowledgeCheckPolicy
+    || (project.scormConfig.requireKnowledgeCheckBeforeContinue ? 'pass' : 'optional');
+  const settings = {
+    projectId: project.project.id,
+    hasAssessment,
+    passMark,
+    maxAttempts: hasAssessment && Number.isInteger(project.courseContent.assessment.maxAttempts)
+      && Number(project.courseContent.assessment.maxAttempts) > 0
+      ? project.courseContent.assessment.maxAttempts : null,
+    scoreTracking: project.scormConfig.scoreTracking || 'best',
+    reviewPolicy: project.courseContent.assessment.reviewPolicy || 'after-pass',
+    knowledgeCheckPolicy,
+    requireAudioCompletionBeforeContinue: Boolean(project.scormConfig.requireAudioCompletionBeforeContinue),
+  };
+  return `const PAGES=${JSON.stringify(pages)};\nconst COURSE_SETTINGS=${JSON.stringify(settings)};\n${navigationRuntime}`;
+};
 
 export class ScormPackager {
   static lastImageReport: ImageExportReport | null = null;
@@ -781,7 +707,25 @@ export class ScormPackager {
     const pages: Page[] = isPowerPointImport
       ? [...project.courseContent.topics]
       : [project.courseContent.welcomePage, project.courseContent.learningObjectivesPage, ...project.courseContent.topics];
-    const pageEntries = [...pages.map(page => ({ id: safeId(page.id), title: page.title })), { id: 'assessment', title: 'Assessment' }];
+    const assessmentQuestions = project.courseContent.assessment.questions || [];
+    const hasAssessment = assessmentQuestions.length > 0;
+    const passMark = Number(project.courseContent.assessment.passMark ?? 80);
+    if (hasAssessment && (!Number.isInteger(passMark) || passMark < 1 || passMark > 100)) {
+      throw new Error('Assessment pass mark must be a whole number between 1 and 100 before exporting.');
+    }
+    if (!pages.length) throw new Error('Course export requires at least one lesson page.');
+    const pageEntries = [...pages.map(page => ({
+      id: safeId(page.id), title: page.title,
+      knowledge: 'knowledgeCheck' in page && Boolean(page.knowledgeCheck?.questions.length),
+      audio: Boolean(page.media?.some(media => media.type === 'audio' && !media.candidate)),
+      assessment: false,
+    })), ...(hasAssessment ? [{ id: 'assessment', title: 'Assessment', knowledge: false, audio: false, assessment: true }] : [])];
+    if (new Set(pageEntries.map(page => page.id)).size !== pageEntries.length) {
+      throw new Error('Course contains duplicate page identifiers; correct them before exporting.');
+    }
+    if (pageEntries.some(page => page.id.length > 255)) {
+      throw new Error('A page identifier exceeds the 255-character SCORM 1.2 bookmark limit.');
+    }
     const assetMap = new Map<string, string>();
     const captionMap = new Map<string, string>();
     const imageDiagnostics: ImageExportDiagnostic[] = [];
@@ -1021,6 +965,14 @@ export class ScormPackager {
 
     const legacyExtraMediaByPageId = await packageLegacyPageImages(pages, zip, assetFiles, assetMap, imageDiagnostics);
     const legacyExtraAudioByPageId = await packageLegacyPageAudio(pages, zip, assetFiles, assetMap);
+    // A legacy audio-# file becomes a real runtime completion requirement once packaged.
+    pageEntries.forEach((entry, index) => {
+      const page = pages[index];
+      if (!page) return;
+      const attachedAudio = (page.media || []).find(media => media.type === 'audio' && !media.candidate);
+      entry.audio = Boolean((attachedAudio && getAssetSrc(assetMap, attachedAudio))
+        || legacyExtraAudioByPageId.get(page.id)?.length);
+    });
 
     const inlineAssetHrefs: string[] = [];
     const inlineImageCache = new Map<string, string>();
@@ -1040,10 +992,11 @@ export class ScormPackager {
     }
     await packageLegacyCaptionFiles(pages, zip, captionMap, rootHandle);
 
-    zip.file('styles/main.css', buildStyles() + buildMediaLightboxStyles() + buildExportContentStyles() + buildThemeStyles(project.scormConfig.outputTheme || 'dark-violet'));
+    zip.file('styles/main.css', buildStyles() + buildMediaLightboxStyles() + buildExportContentStyles() + buildThemeStyles(project.scormConfig.outputTheme || 'dark-violet') +
+      '.runtime-status,.runtime-alert{padding:8px 12px;font-weight:600;line-height:1.45}.runtime-status{color:inherit}.runtime-status.is-error,.runtime-alert{color:#b91c1c}.runtime-alert[hidden],.runtime-status[hidden],.check-button[hidden]{display:none}.check-button:disabled{opacity:.55;cursor:not-allowed}');
     zip.file('scripts/scorm-api.js', buildScormApi());
-    zip.file('scripts/navigation.js', buildNavigation(pageEntries, project.courseContent.assessment.passMark || 80, project.scormConfig));
-    zip.file('project.json', JSON.stringify(project, null, 2));
+    zip.file('scripts/navigation.js', buildNavigation(pageEntries, project, passMark, hasAssessment));
+    zip.file('project.json', JSON.stringify({ ...project, scormConfig: { ...project.scormConfig, passingScore: passMark } }, null, 2));
     const imageReport: ImageExportReport = {
       generatedAt: new Date().toISOString(),
       summary: {
@@ -1063,9 +1016,9 @@ export class ScormPackager {
         ...(legacyExtraAudioByPageId.get(page.id) || []),
       ]));
     }
-    zip.file('pages/assessment.html', renderAssessment(project));
+    if (hasAssessment) zip.file('pages/assessment.html', renderAssessment(project));
 
-    zip.file('index.html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="styles/main.css"><script src="scripts/scorm-api.js"></script></head><body><nav class="sidebar"><div class="sidebar-header"><div class="course-title">${escapeHtml(title)}</div><div class="progress-wrap"><div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div><div id="progress-text" class="progress-text">0% complete</div></div></div><div class="sidebar-nav">${pageEntries.map((page, index) => `<a href="#" class="nav-item" data-index="${index}">${escapeHtml(page.id !== 'assessment' && (isPowerPointImport || index > 1) ? `${isPowerPointImport ? index + 1 : index - 1}. ${page.title}` : page.title)}</a>`).join('')}</div></nav><main class="main-area"><header class="header"><h1>${escapeHtml(title)}</h1></header><div id="content-container" class="content-container"></div><footer class="footer"><button id="prev-button" class="nav-button secondary" type="button">Previous</button><div id="gate-message" class="muted gate-message"></div><button id="next-button" class="nav-button primary" type="button">Next</button></footer></main><script src="scripts/navigation.js"></script></body></html>`);
+    zip.file('index.html', `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="styles/main.css"><script src="scripts/scorm-api.js"></script></head><body><nav class="sidebar"><div class="sidebar-header"><div class="course-title">${escapeHtml(title)}</div><div class="progress-wrap"><div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div><div id="progress-text" class="progress-text">0% complete</div></div></div><div class="sidebar-nav">${pageEntries.map((page, index) => `<a href="#" class="nav-item" data-index="${index}">${escapeHtml(page.id !== 'assessment' && (isPowerPointImport || index > 1) ? `${isPowerPointImport ? index + 1 : index - 1}. ${page.title}` : page.title)}</a>`).join('')}</div></nav><main class="main-area"><header class="header"><h1>${escapeHtml(title)}</h1><div id="runtime-status" class="runtime-status" role="status" aria-live="polite" hidden></div></header><div id="content-container" class="content-container"></div><div id="runtime-alert" class="runtime-alert" role="alert" hidden></div><footer class="footer"><button id="prev-button" class="nav-button secondary" type="button">Previous</button><div id="gate-message" class="muted gate-message" role="status" aria-live="polite"></div><button id="save-exit-button" class="nav-button secondary" type="button">Save &amp; Exit</button><button id="next-button" class="nav-button primary" type="button">Next</button></footer></main><script src="scripts/navigation.js"></script></body></html>`);
 
     const fileList = Array.from(new Set([
       'index.html',
@@ -1083,7 +1036,7 @@ export class ScormPackager {
     zip.file('imsmanifest.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <manifest identifier="${escapeXml(project.project.id)}" version="1.0" xmlns="http://www.imsproject.org/xsd/imscp_rootv1p1p2" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_rootv1p2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <metadata><schema>ADL SCORM</schema><schemaversion>1.2</schemaversion></metadata>
-  <organizations default="default_org"><organization identifier="default_org"><title>${escapeXml(title)}</title><item identifier="item_1" identifierref="main"><title>${escapeXml(title)}</title><adlcp:masteryscore>${project.courseContent.assessment.passMark || 80}</adlcp:masteryscore></item></organization></organizations>
+  <organizations default="default_org"><organization identifier="default_org"><title>${escapeXml(title)}</title><item identifier="item_1" identifierref="main"><title>${escapeXml(title)}</title>${hasAssessment ? `<adlcp:masteryscore>${passMark}</adlcp:masteryscore>` : ''}</item></organization></organizations>
   <resources><resource identifier="main" type="webcontent" adlcp:scormtype="sco" href="index.html">${fileList.map(file => `<file href="${escapeXml(file)}"/>`).join('')}</resource></resources>
 </manifest>`);
 
