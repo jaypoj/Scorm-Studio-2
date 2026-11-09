@@ -9,7 +9,10 @@
     "check:pdf-batch": "node scripts/check-pdf-batch.cjs",
     "check:pdf-runtime": "node scripts/check-pdf-runtime.cjs",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:scorm-runtime": "node scripts/check-scorm-runtime.cjs",
+    "check:narration": "node scripts/check-narration-paste.cjs",
+    "check:tts-edits": "node scripts/check-tts-edit-preservation.cjs"
   },
   "dependencies": {
     "@google/genai": "^1.37.0",

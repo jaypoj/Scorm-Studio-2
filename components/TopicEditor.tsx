@@ -10,6 +10,7 @@ import { MediaSearchModal } from './MediaSearchModal';
 import { ErrorDiagnosticsModal } from './ErrorDiagnosticsModal';
 import { DEFAULT_TTS_SETTINGS, OPENAI_TTS_VOICES, TTS_PACE_OPTIONS } from '../constants';
 import { buildVttFromNarration, estimateNarrationDurationSeconds, readAudioDurationSeconds } from '../utils/captions';
+import { normalizePastedNarration } from '../utils/narrationPaste';
 
 interface TopicEditorProps {
   data: Topic | WelcomePage | LearningObjectivesPage;
@@ -30,6 +31,13 @@ interface TopicEditorProps {
 
 export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assetsHandle, onAssetCreate, onLinkAssets, onOpenAiSettings, isSandbox, aiSettings, label, projectId, pronunciationConfig, onPronunciationConfigChange, batchJob, batchProgress }) => {
   const mediaFileInputRef = useRef<HTMLInputElement>(null);
+  const latestPageRef = useRef(data);
+  latestPageRef.current = data;
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [generatingImg, setGeneratingImg] = useState<number | null>(null);
   const [generatingAudio, setGeneratingAudio] = useState(false);
@@ -695,9 +703,15 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       return;
     }
 
+    const requestedPageId = data.id;
+    const requestedNarration = data.narration;
     setGeneratingAudio(true);
     try {
-      const audioBlob = await generateNarrationAudio(aiSettings, data.narration, pronunciationConfig.tts, pronunciationConfig.pronunciations);
+      const audioBlob = await generateNarrationAudio(aiSettings, requestedNarration, pronunciationConfig.tts, pronunciationConfig.pronunciations);
+      if (!isMountedRef.current || latestPageRef.current.id !== requestedPageId || latestPageRef.current.narration !== requestedNarration) {
+        alert('The page or narration script changed while TTS was generating. No audio was attached, so your newer edits remain intact. Generate TTS again with the current script.');
+        return;
+      }
       const storageId = ScormManager.generateStorageId('audio');
       const file = new File([audioBlob], `${storageId}.wav`, { type: 'audio/wav' });
       await onAssetCreate(file, storageId);
@@ -727,10 +741,15 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
         url: '',
         source: 'azure-openai-tts'
       };
+      const currentPage = latestPageRef.current;
+      if (!isMountedRef.current || currentPage.id !== requestedPageId || currentPage.narration !== requestedNarration) {
+        alert('Narration changed during media saving. The new audio file is retained in the media folder, but newer page edits were not overwritten.');
+        return;
+      }
       onChange({
-        ...data,
+        ...currentPage,
         media: [
-          ...(data.media || []).filter(media => !isNarrationAudio(media)),
+          ...(currentPage.media || []).filter(media => !isNarrationAudio(media)),
           newMedia
         ]
       });
@@ -741,7 +760,7 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
       const recoveryOpened = recordAiFailure('Text-to-speech narration', e);
       if (!recoveryOpened) setIsAiRecoveryOpen(false);
     } finally {
-      setGeneratingAudio(false);
+      if (isMountedRef.current) setGeneratingAudio(false);
     }
   };
 
@@ -1230,6 +1249,20 @@ export const TopicEditor: React.FC<TopicEditorProps> = ({ data, onChange, assets
                 <textarea
                 value={data.narration || ''}
                 onChange={(e) => onChange({ ...data, narration: e.target.value })}
+                onPaste={(event) => {
+                  const pastedText = event.clipboardData.getData('text/plain');
+                  const normalized = normalizePastedNarration(pastedText);
+                  if (!pastedText || pastedText === normalized) return; // Keep the browser's normal paste.
+                  event.preventDefault();
+                  const target = event.currentTarget;
+                  const start = target.selectionStart ?? (data.narration || '').length;
+                  const end = target.selectionEnd ?? start;
+                  const before = data.narration || '';
+                  onChange({ ...data, narration: before.slice(0, start) + normalized + before.slice(end) });
+                  // Restore caret after the normalized paste once React updates the textarea.
+                  const caret = start + normalized.length;
+                  requestAnimationFrame(() => target.setSelectionRange(caret, caret));
+                }}
                 rows={4}
                 className="w-full p-3 bg-white text-slate-900 border border-slate-200 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 placeholder="Script for voiceover..."

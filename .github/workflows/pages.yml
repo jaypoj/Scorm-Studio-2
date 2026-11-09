@@ -42,6 +42,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: SCORM runtime, narration and TTS regression checks
+        run: |
+          npm run check:scorm-runtime
+          npm run check:narration
+          npm run check:tts-edits
+          node scripts/check-course-preview.cjs
+
       - name: Build
         run: npm run build
         env:

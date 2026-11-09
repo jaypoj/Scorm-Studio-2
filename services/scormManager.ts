@@ -230,9 +230,16 @@ export class ScormManager {
       media: project.media || { images: [], videos: [], audio: [] },
       scormConfig: {
         version: project.scormConfig?.version || '1.2',
-        passingScore: project.scormConfig?.passingScore || 80,
+        passingScore: courseContent.assessment.passMark ?? 80,
         completionCriteria: project.scormConfig?.completionCriteria || 'passed',
-        requireKnowledgeCheckBeforeContinue: Boolean(project.scormConfig?.requireKnowledgeCheckBeforeContinue),
+        requireKnowledgeCheckBeforeContinue: project.scormConfig?.knowledgeCheckPolicy
+          ? project.scormConfig.knowledgeCheckPolicy === 'pass'
+          : Boolean(project.scormConfig?.requireKnowledgeCheckBeforeContinue),
+        knowledgeCheckPolicy: ['optional', 'attempt', 'pass'].includes(project.scormConfig?.knowledgeCheckPolicy || '')
+          ? project.scormConfig.knowledgeCheckPolicy
+          : project.scormConfig?.requireKnowledgeCheckBeforeContinue ? 'pass' : 'optional',
+        scoreTracking: ['best', 'first', 'latest'].includes(project.scormConfig?.scoreTracking || '')
+          ? project.scormConfig.scoreTracking : 'best',
         requireAudioCompletionBeforeContinue: Boolean(project.scormConfig?.requireAudioCompletionBeforeContinue),
         outputTheme: normalizeOutputTheme(project.scormConfig?.outputTheme),
         contentMode: project.scormConfig?.contentMode || 'standard',
