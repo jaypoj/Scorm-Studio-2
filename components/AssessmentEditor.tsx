@@ -81,6 +81,20 @@ export const AssessmentEditor: React.FC<AssessmentEditorProps> = ({ assessment, 
         </div>
       </div>
 
+      <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200">
+        <label htmlFor="assessment-review-policy" className="block text-sm font-semibold text-slate-800 mb-1">Show correct-answer feedback</label>
+        <select
+          id="assessment-review-policy"
+          value={assessment.reviewPolicy || 'after-pass'}
+          onChange={(event) => onChange({ ...assessment, reviewPolicy: event.target.value as NonNullable<Assessment['reviewPolicy']> })}
+          className="w-full max-w-md p-2 bg-white text-slate-900 border border-slate-300 rounded"
+        >
+          <option value="after-pass">After a passing assessment (recommended)</option>
+          <option value="none">Never show per-question answers</option>
+          <option value="immediate">Immediately after submission (including failed attempts)</option>
+        </select>
+        <p className="text-xs text-slate-600 mt-2">A failed attempt defaults to the score only. Retake Assessment clears all prior selections and feedback. Changing this setting affects newly exported SCORM packages.</p>
+      </div>
       <div className="space-y-6">
         {assessment.questions.map((q, idx) => (
           <div key={q.id} className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
