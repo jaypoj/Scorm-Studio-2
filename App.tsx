@@ -747,9 +747,9 @@ const App: React.FC = () => {
   };
 
   const updateProjectData = (updater: (prev: ScormProject) => ScormProject) => {
-    if (!context) return;
-    const newData = updater(context.projectData);
-    setContext({ ...context, projectData: newData });
+    // Use the newest project state, not the render in which a long TTS request began.
+    // Otherwise finishing an async operation can replace lesson edits made in the meantime.
+    setContext(prev => prev ? { ...prev, projectData: updater(prev.projectData) } : prev);
   };
 
   const updateTopic = (updatedPage: Topic | WelcomePage | LearningObjectivesPage) => {
@@ -917,16 +917,33 @@ const App: React.FC = () => {
 
   const replacePagesInProject = (
     project: ScormProject,
-    pagesById: Map<string, Topic | WelcomePage | LearningObjectivesPage>
-  ): ScormProject => ({
-    ...project,
-    courseContent: {
-      ...project.courseContent,
-      welcomePage: (pagesById.get(project.courseContent.welcomePage.id) as WelcomePage) || project.courseContent.welcomePage,
-      learningObjectivesPage: (pagesById.get(project.courseContent.learningObjectivesPage.id) as LearningObjectivesPage) || project.courseContent.learningObjectivesPage,
-      topics: project.courseContent.topics.map(topic => (pagesById.get(topic.id) as Topic) || topic),
-    }
-  });
+    pagesById: Map<string, Topic | WelcomePage | LearningObjectivesPage>,
+    updatedField: 'audio' | 'caption',
+  ): ScormProject => {
+    // Batch jobs use snapshots taken when they start. Merge ONLY their generated
+    // audio/caption results onto the latest project; never restore stale page content.
+    const mergePage = <T extends Topic | WelcomePage | LearningObjectivesPage>(page: T): T => {
+      const result = pagesById.get(page.id);
+      if (!result || page.narration !== result.narration) return page;
+      // Discard stale TTS/caption results when the author edited the script mid-job.
+      if (updatedField === 'caption') return { ...page, caption: result.caption };
+      const newAudio = [...(result.media || [])].reverse().find(isNarrationAudioMedia);
+      if (!newAudio) return page;
+      return {
+        ...page,
+        media: [...(page.media || []).filter(item => !isNarrationAudioMedia(item)), newAudio],
+      };
+    };
+    return {
+      ...project,
+      courseContent: {
+        ...project.courseContent,
+        welcomePage: mergePage(project.courseContent.welcomePage),
+        learningObjectivesPage: mergePage(project.courseContent.learningObjectivesPage),
+        topics: project.courseContent.topics.map(mergePage),
+      },
+    };
+  };
 
   const createAudioAssetForPage = async (page: Topic | WelcomePage | LearningObjectivesPage): Promise<Topic | WelcomePage | LearningObjectivesPage> => {
     if (!page.narration?.trim()) return page;
@@ -1029,7 +1046,8 @@ const App: React.FC = () => {
           continue;
         }
       }
-      updateProjectData(project => replacePagesInProject(project, pagesById));
+      updateProjectData(project => project.project.id === context.projectData.project.id
+        ? replacePagesInProject(project, pagesById, 'audio') : project);
       if (quotaPaused) {
         alert(`Batch TTS paused. Generated audio for ${generatedCount} page${generatedCount === 1 ? '' : 's'} and skipped ${skippedCount}. Completed pages were saved. Resume later after the provider retry window, or after IT raises the Azure OpenAI deployment quota.`);
       } else {
@@ -1110,7 +1128,8 @@ const App: React.FC = () => {
         }
       }
 
-      updateProjectData(project => replacePagesInProject(project, pagesById));
+      updateProjectData(project => project.project.id === context.projectData.project.id
+        ? replacePagesInProject(project, pagesById, 'caption') : project);
       alert(`Batch VTT complete. Generated captions for ${captionCount} pages. Skipped ${skippedCount} pages without usable audio.`);
     } catch (error: any) {
       console.error(error);

@@ -25,6 +25,8 @@ export interface Assessment {
   narration: string | null;
   passMark: number;
   questions: Question[];
+  maxAttempts?: number | null; // Null/undefined allows full retakes without a numeric limit.
+  reviewPolicy?: 'immediate' | 'after-pass' | 'none';
 }
 
 export interface Topic {
@@ -122,6 +124,8 @@ export interface ScormProject {
     passingScore: number;
     completionCriteria: string;
     requireKnowledgeCheckBeforeContinue: boolean;
+    knowledgeCheckPolicy?: 'optional' | 'attempt' | 'pass';
+    scoreTracking?: 'best' | 'first' | 'latest';
     requireAudioCompletionBeforeContinue: boolean;
     outputTheme: 'dark-violet' | 'legacy-green' | 'light-purple';
     contentMode?: 'standard' | 'ppt-import';
