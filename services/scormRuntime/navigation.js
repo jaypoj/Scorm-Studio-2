@@ -366,7 +366,9 @@ function submitKnowledgeCheck(button) {
     box.dataset.completed = 'true';
     button.textContent = 'Knowledge Check Complete';
     button.disabled = true;
-    showAlert(allCorrect ? 'Knowledge check complete.' : 'Knowledge check attempt recorded. You may continue.');
+    // The question feedback and disabled submit button already confirm completion.
+    // Clear any earlier warning instead of showing a redundant red success alert.
+    showAlert('');
     save();
   } else {
     showAlert('Review the feedback and retry the knowledge check.');
@@ -580,6 +582,9 @@ async function loadPage(index) {
     failedPageIndex = -1;
     const container = el('content-container');
     container.innerHTML = html;
+    // The alert describes the previous lesson. Do not carry success/error feedback
+    // into a different lesson, where it can falsely imply an unanswered check is done.
+    showAlert('');
     container.scrollTop = 0;
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;

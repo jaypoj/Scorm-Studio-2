@@ -611,7 +611,8 @@ async function check(id, description, fn) {
     s.answer(0);
     await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
     assert.equal(s.doc.getElementById('next-button').disabled, false);
-    assert.match(s.doc.getElementById('runtime-alert').textContent, /Knowledge check complete/);
+    assert.equal(s.doc.getElementById('runtime-alert').textContent, '', 'Successful check must not show a red completion banner');
+    assert.equal(s.doc.getElementById('runtime-alert').hidden, true);
 
     await s.run('nextPage()');
     await new Promise(resolve => setImmediate(resolve));
@@ -636,15 +637,46 @@ async function check(id, description, fn) {
     await s.run('loadPage(2)');
     s.answer(0);
     await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    // An actionable warning about the current page must survive a failed page load.
+    await s.run("showAlert('Current lesson warning.')");
     await s.run('nextPage()');
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(await s.run('currentPageId()'), 'topic-0');
     assert.match(s.doc.getElementById('runtime-status').textContent, /Could not load/);
-    assert.match(s.doc.getElementById('runtime-alert').textContent, /Knowledge check complete/);
+    assert.equal(s.doc.getElementById('runtime-alert').textContent, 'Current lesson warning.');
     await s.run('nextPage()');
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(await s.run('currentPageId()'), 'topic-1');
     assert.equal(s.doc.getElementById('runtime-alert').hidden, true);
+  });
+  await check('E27', 'Successful knowledge check clears prior warning without bypassing an audio requirement', async () => {
+    const lms = new MockLms();
+    const s = await simulator({ knowledge: true, knowledgePolicy: 'pass', audio: true, audioGate: true }, lms);
+    await toKnowledge(s);
+    await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    assert.match(s.doc.getElementById('runtime-alert').textContent, /Answer every knowledge-check question/);
+    s.answer(0);
+    await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    assert.equal(s.doc.getElementById('runtime-alert').textContent, '');
+    assert.equal(s.doc.getElementById('runtime-alert').hidden, true);
+    assert.equal(s.doc.currentCard.button.textContent, 'Knowledge Check Complete');
+    assert.equal(s.doc.currentCard.button.disabled, true);
+    assert.equal(s.doc.getElementById('next-button').disabled, true, 'Listening requirement remains enforced');
+    assert.match(s.doc.getElementById('gate-message').textContent, /Listen to the full narration/);
+    assert.equal(await s.run('completedKnowledgeChecks.has(currentPageId())'), true);
+    assert.ok(lms.values['cmi.suspend_data']);
+  });
+  await check('E28', 'Attempt-only completion clears warning while leaving answer feedback and navigation intact', async () => {
+    const s = await simulator({ knowledge: true, knowledgePolicy: 'attempt' });
+    await toKnowledge(s);
+    s.answer(0, false);
+    await s.run('submitKnowledgeCheck(document.querySelector(".knowledge-check").button)');
+    assert.equal(s.doc.getElementById('runtime-alert').textContent, '');
+    assert.equal(s.doc.getElementById('runtime-alert').hidden, true);
+    assert.equal(s.doc.currentCard.button.disabled, true);
+    assert.equal(s.doc.getElementById('next-button').disabled, false);
+    assert.equal(s.doc.currentCard.questions[0].feedback.className, 'feedback incorrect');
+    assert.notEqual(s.doc.currentCard.questions[0].feedback.textContent, '');
   });
   // Production `npm ci` installs JSZip. Validate a REAL SCORM ZIP byte stream in GitHub Actions.
   let RealJSZip;
